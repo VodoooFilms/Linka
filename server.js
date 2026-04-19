@@ -158,6 +158,9 @@ function handleCommand(input, data) {
 export async function startServer(options = {}) {
   setupFileLogging();
   const port = Number(options.port || DEFAULT_PORT);
+  const onClientConnected = typeof options.onClientConnected === 'function'
+    ? options.onClientConnected
+    : null;
   const app = express();
   const server = createHttpServer(app);
   const wss = new WebSocketServer({ server });
@@ -219,6 +222,10 @@ export async function startServer(options = {}) {
   wss.on('connection', (ws, req) => {
     clients.add(ws);
     console.log(`[ws] Client connected from ${req.socket.remoteAddress}. Total clients: ${clients.size}`);
+    onClientConnected?.({
+      clients: clients.size,
+      remoteAddress: req.socket.remoteAddress || 'unknown',
+    });
     ws.send(JSON.stringify({ type: 'hello', inputBackend: input.name, nativeInputReady: input.ready }));
 
     ws.on('message', (message) => {

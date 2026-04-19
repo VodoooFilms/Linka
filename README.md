@@ -52,7 +52,7 @@ npm run dev:electron
 
 ## Build
 
-Create a portable Windows executable:
+Create the Windows installer:
 
 ```powershell
 npm run build:win
@@ -61,8 +61,10 @@ npm run build:win
 Output:
 
 ```text
-dist_electron\Linka.exe
+dist_electron\Linka-Setup.exe
 ```
+
+The installed app starts with Windows in the background, launches the local server, and stays available from the system tray. To create a portable executable instead, run `npm run build:win:portable`.
 
 ## Project Structure
 

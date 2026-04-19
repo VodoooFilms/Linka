@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, shell } from 'electron';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,6 +16,10 @@ const gotTheLock = app.requestSingleInstanceLock();
 const iconPath = path.join(__dirname, 'build', 'icon.ico');
 const APP_NAME = 'Linka';
 const APP_ID = 'com.linka.desktop';
+const START_HIDDEN_ARG = '--hidden';
+const AUTO_START_ENABLED = true;
+const STARTUP_REG_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const STARTUP_REG_NAME = APP_NAME;
 
 ipcMain.handle('copy-text', (_event, value) => {
   clipboard.writeText(String(value || ''));
@@ -147,6 +152,54 @@ function showConnectionWindow() {
   });
 }
 
+function closeConnectionWindow() {
+  if (statusWindow && !statusWindow.isDestroyed()) {
+    statusWindow.close();
+  }
+}
+
+function shouldShowConnectionWindow() {
+  return !process.argv.includes(START_HIDDEN_ARG);
+}
+
+function isPortableBuild() {
+  return Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
+}
+
+function isStartupRegistrationSupported() {
+  return process.platform === 'win32' && app.isPackaged && !isPortableBuild();
+}
+
+function runRegistryCommand(args) {
+  const result = spawnSync('reg.exe', args, {
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+
+  return result.status === 0;
+}
+
+function setStartupRegistration(enabled) {
+  if (!isStartupRegistrationSupported()) {
+    return false;
+  }
+
+  if (!enabled) {
+    return runRegistryCommand(['delete', STARTUP_REG_PATH, '/v', STARTUP_REG_NAME, '/f']);
+  }
+
+  const command = `"${process.execPath}" ${START_HIDDEN_ARG}`;
+  return runRegistryCommand(['add', STARTUP_REG_PATH, '/v', STARTUP_REG_NAME, '/t', 'REG_SZ', '/d', command, '/f']);
+}
+
+function configureAutoStart() {
+  if (!AUTO_START_ENABLED) {
+    return;
+  }
+
+  setStartupRegistration(true);
+}
+
 function rebuildTray() {
   const primaryUrl = getPrimaryLanUrl();
   const nativeLabel = serverInfo?.nativeInputReady
@@ -177,6 +230,12 @@ function rebuildTray() {
 if (!gotTheLock) {
   app.quit();
 } else {
+  app.on('second-instance', (_event, argv) => {
+    if (!argv.includes(START_HIDDEN_ARG)) {
+      showConnectionWindow();
+    }
+  });
+
   app.on('ready', async () => {
     app.setAppUserModelId(APP_ID);
 
@@ -184,11 +243,17 @@ if (!gotTheLock) {
       process.env.NODE_ENV = 'production';
     }
 
+    configureAutoStart();
+
     try {
       const logDir = path.join(app.getPath('userData'), 'logs');
       fs.mkdirSync(logDir, { recursive: true });
       process.env.LINKA_LOG_FILE = path.join(logDir, 'linka.log');
-      serverInfo = await startServer();
+      serverInfo = await startServer({
+        onClientConnected: () => {
+          closeConnectionWindow();
+        },
+      });
     } catch (error) {
       console.error(`Failed to start ${APP_NAME} server:`, error);
       app.quit();
@@ -198,7 +263,10 @@ if (!gotTheLock) {
     const icon = nativeImage.createFromPath(iconPath);
     tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
     rebuildTray();
-    showConnectionWindow();
+
+    if (shouldShowConnectionWindow()) {
+      showConnectionWindow();
+    }
 
     if (app.dock) app.dock.hide();
   });

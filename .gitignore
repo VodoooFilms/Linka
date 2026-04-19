@@ -15,6 +15,7 @@ native/**/obj/
 # Keep the application icon, ignore other generated build assets
 build/*
 !build/icon.ico
+!build/installer.nsh
 
 # Logs
 *.log
