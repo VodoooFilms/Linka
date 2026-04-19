@@ -199,15 +199,15 @@ internal static class Program
     {
         using var endpoint = GetAudioEndpointVolume();
         var context = VolumeEventContext;
-        endpoint.Value.SetMute(muted, ref context);
+        Marshal.ThrowExceptionForHR(endpoint.Value.SetMute(muted, ref context));
     }
 
     private static void ToggleMute()
     {
         using var endpoint = GetAudioEndpointVolume();
-        endpoint.Value.GetMute(out var muted);
+        Marshal.ThrowExceptionForHR(endpoint.Value.GetMute(out var muted));
         var context = VolumeEventContext;
-        endpoint.Value.SetMute(!muted, ref context);
+        Marshal.ThrowExceptionForHR(endpoint.Value.SetMute(!muted, ref context));
     }
 
     private static void SendMouse(int dx, int dy, int mouseData, uint flags)
@@ -445,7 +445,7 @@ internal static class Program
         int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, ref Guid pguidEventContext);
         int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
         int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
-        int SetMute(bool bMute, ref Guid pguidEventContext);
-        int GetMute(out bool pbMute);
+        int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid pguidEventContext);
+        int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
     }
 }

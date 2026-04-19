@@ -267,6 +267,7 @@
       min-height: 0;
       display: grid;
       grid-template-columns: minmax(86px, 20vw) minmax(220px, 1fr) minmax(86px, 18vw);
+      grid-template-rows: minmax(96px, 30%) 1fr minmax(76px, 24%);
       gap: 8px;
       padding: 8px;
     }
@@ -275,8 +276,7 @@
       grid-row: 3;
     }
 
-    .zone,
-    .cluster {
+    .zone {
       min-width: 0;
       min-height: 0;
     }
@@ -317,6 +317,8 @@
     }
 
     .drag-zone {
+      grid-column: 1;
+      grid-row: 1 / 4;
       background: linear-gradient(90deg, var(--accent-soft), rgba(17, 22, 26, 0.96));
     }
 
@@ -326,6 +328,8 @@
     }
 
     .trackpad-zone {
+      grid-column: 2;
+      grid-row: 1 / 4;
       background:
         radial-gradient(circle at center, rgba(0, 217, 139, 0.08), transparent 42%),
         linear-gradient(135deg, #12191d, #090d10);
@@ -367,54 +371,44 @@
     }
 
     .volume-zone {
-      display: grid;
-      grid-template-rows: 1fr;
+      grid-column: 3;
+      grid-row: 1;
+      display: flex;
       align-items: center;
-      padding: 32px 12px 12px;
+      justify-content: center;
+      padding: 12px;
       background: linear-gradient(270deg, rgba(0, 217, 139, 0.12), rgba(17, 22, 26, 0.96));
-    }
-
-    .volume-control {
-      width: 100%;
-      height: 100%;
-      display: grid;
-      align-items: center;
       touch-action: none;
     }
 
-    .volume-shell {
-      width: 100%;
-      height: 100%;
-      min-width: 0;
-      display: flex;
-      align-items: center;
-    }
-
-    .volume-rail {
+    .volume-slider {
+      --volume-level: 50%;
       position: relative;
       width: 100%;
       height: 100%;
-      min-height: 16px;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.13);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+      min-width: 0;
+      min-height: 28px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
       overflow: hidden;
+      touch-action: none;
     }
 
-    .volume-fill {
+    .volume-slider::before {
+      content: "";
       position: absolute;
-      right: 0;
+      top: 0;
       bottom: 0;
       left: 0;
-      height: var(--volume-level, 50%);
-      min-height: 3px;
+      width: var(--volume-level);
       border-radius: inherit;
-      background: rgba(43, 128, 31, 0.95);
+      background: rgba(0, 217, 139, 0.42);
       pointer-events: none;
     }
 
-    .volume-knob {
-      display: none;
+    .volume-slider::after {
+      content: none;
     }
 
     .volume-value {
@@ -423,19 +417,14 @@
       top: auto;
     }
 
-    .cluster {
-      grid-column: 3;
-      display: grid;
-      grid-template-rows: minmax(96px, 30%) 1fr minmax(76px, 24%);
-      gap: 8px;
-    }
-
     .volume-zone.active {
       border-color: var(--accent);
       background: linear-gradient(270deg, rgba(0, 217, 139, 0.24), rgba(17, 22, 26, 0.96));
     }
 
     .scroll-zone {
+      grid-column: 3;
+      grid-row: 2;
       background: linear-gradient(270deg, var(--scroll-soft), rgba(17, 22, 26, 0.96));
     }
 
@@ -445,6 +434,8 @@
     }
 
     .right-zone {
+      grid-column: 3;
+      grid-row: 3;
       background: linear-gradient(270deg, var(--warn-soft), rgba(17, 22, 26, 0.96));
     }
 
@@ -461,7 +452,7 @@
       .controller {
         grid-row: 3;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) clamp(32px, 10vw, 44px);
-        grid-template-rows: 30px minmax(0, 1fr) 64px;
+        grid-template-rows: 50px minmax(0, 1fr) 64px;
         grid-template-areas:
           "volume volume volume"
           "trackpad trackpad scroll"
@@ -472,86 +463,76 @@
       }
 
       .trackpad-zone {
+        grid-column: auto;
+        grid-row: auto;
         grid-area: trackpad;
       }
 
       .drag-zone {
+        grid-column: auto;
+        grid-row: auto;
         grid-area: hold;
       }
 
-      .cluster {
-        display: contents;
-      }
-
       .volume-zone {
+        grid-column: auto;
+        grid-row: auto;
         grid-area: volume;
-        padding: 16px 10px 4px;
+        display: flex;
+        align-items: end;
+        justify-content: stretch;
+        padding: 18px 0 2px;
+        background: transparent;
+        border-color: transparent;
       }
 
-      .volume-control {
-        position: relative;
+      .volume-zone.active {
+        background: transparent;
+        border-color: transparent;
+      }
+
+      .volume-slider {
+        flex: 1 1 auto;
         width: 100%;
         min-width: 0;
-        height: 100%;
+        height: 28px;
         min-height: 28px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.075);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.055),
+          0 6px 16px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
       }
 
-      .volume-shell {
-        position: absolute;
-        left: 10px;
-        right: 10px;
-        top: 16px;
-        bottom: 4px;
-        width: 100%;
+      .volume-slider::before {
         min-width: 0;
-      }
-
-      .volume-rail {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        min-width: 0;
-        height: 100%;
-        min-height: 14px;
-        border-radius: 3px;
-        background: rgba(255, 255, 255, 0.10);
-      }
-
-      .volume-fill {
-        top: 0;
-        right: auto;
-        bottom: 0;
-        left: 0;
-        width: var(--volume-level, 50%);
-        height: 100%;
-        min-width: 12px;
-        min-height: 0;
-        background: rgba(43, 128, 31, 0.98);
-      }
-
-      .volume-knob {
-        display: none;
+        background: linear-gradient(90deg, rgba(0, 217, 139, 0.34), rgba(85, 214, 155, 0.58));
       }
     }
 
     @media (orientation: portrait), (max-aspect-ratio: 3 / 4) {
-      .volume-zone .volume-rail {
+      .volume-zone .volume-slider {
         width: 100%;
         min-width: 0;
       }
 
       .volume-zone .zone-title {
         display: block;
-        top: 5px;
-        left: 10px;
+        top: 4px;
+        left: 12px;
       }
 
       .scroll-zone {
+        grid-column: auto;
+        grid-row: auto;
         grid-area: scroll;
         min-width: 0;
       }
 
       .right-zone {
+        grid-column: auto;
+        grid-row: auto;
         grid-area: right;
       }
 
@@ -610,13 +591,13 @@
       }
 
       .app.is-fullscreen .controller {
-        grid-template-rows: 22px minmax(0, 1fr) 46px;
+        grid-template-rows: 46px minmax(0, 1fr) 46px;
         gap: 4px;
         padding: 4px 7px 5px;
       }
 
-      .app.is-fullscreen .volume-control {
-        min-height: 20px;
+      .app.is-fullscreen .volume-slider {
+        min-height: 24px;
       }
 
       .app.is-fullscreen.keyboard-open .keyboard-tools {
@@ -625,7 +606,7 @@
       }
 
       .app.is-fullscreen.keyboard-open .controller {
-        grid-template-rows: 20px minmax(0, 1fr) 42px;
+        grid-template-rows: 44px minmax(0, 1fr) 42px;
         gap: 4px;
         padding-bottom: 4px;
       }
@@ -647,7 +628,7 @@
 
       .controller {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
-        grid-template-rows: 28px minmax(0, 1fr) 60px;
+        grid-template-rows: 48px minmax(0, 1fr) 60px;
         grid-template-areas:
           "volume volume volume"
           "trackpad trackpad scroll"
@@ -664,7 +645,7 @@
 
     @media (max-width: 430px) and (orientation: portrait), (max-width: 430px) and (max-aspect-ratio: 3 / 4) {
       .app.is-fullscreen .controller {
-        grid-template-rows: 24px minmax(0, 1fr) 52px;
+        grid-template-rows: 46px minmax(0, 1fr) 52px;
         gap: 4px;
         padding: 4px 6px 8px;
       }
@@ -675,7 +656,7 @@
       }
 
       .app.is-fullscreen.keyboard-open .controller {
-        grid-template-rows: 20px minmax(0, 1fr) 48px;
+        grid-template-rows: 44px minmax(0, 1fr) 48px;
         padding-bottom: 6px;
       }
     }
@@ -721,32 +702,24 @@
         <span id="cursorDot" class="cursor-dot"></span>
       </div>
 
-      <div class="cluster">
-        <div id="volumeZone" class="zone volume-zone" data-control="volume">
-          <span class="zone-title">Volume</span>
-          <div id="volumeControl" class="volume-control">
-            <div id="volumeShell" class="volume-shell">
-              <div id="volumeRail" class="volume-rail" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0">
-                <div id="volumeFill" class="volume-fill"></div>
-                <span id="volumeKnob" class="volume-knob"></span>
-              </div>
-              <span id="volumeValue" class="volume-value">50%</span>
-            </div>
-          </div>
+      <div id="volumeZone" class="zone volume-zone" data-control="volume">
+        <span class="zone-title">Volume</span>
+        <div id="volumeSlider" class="volume-slider" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0">
+          <span id="volumeValue" class="volume-value">50%</span>
         </div>
-        <div id="scrollZone" class="zone scroll-zone" data-control="scroll">
-          <span class="zone-title">Scroll</span>
-          <svg class="zone-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M8 5h8M8 12h8M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
-          </svg>
-        </div>
-        <div id="rightZone" class="zone right-zone" data-control="right-click">
-          <span class="zone-title">Right</span>
-          <svg class="zone-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="4" y="3" width="16" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect>
-            <path d="M12 3v7M4 10h16" fill="none" stroke="currentColor" stroke-width="2"></path>
-          </svg>
-        </div>
+      </div>
+      <div id="scrollZone" class="zone scroll-zone" data-control="scroll">
+        <span class="zone-title">Scroll</span>
+        <svg class="zone-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 5h8M8 12h8M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+        </svg>
+      </div>
+      <div id="rightZone" class="zone right-zone" data-control="right-click">
+        <span class="zone-title">Right</span>
+        <svg class="zone-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4" y="3" width="16" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect>
+          <path d="M12 3v7M4 10h16" fill="none" stroke="currentColor" stroke-width="2"></path>
+        </svg>
       </div>
     </section>
   </main>
@@ -786,8 +759,7 @@
     const dragZone = document.getElementById('dragZone');
     const trackpadZone = document.getElementById('trackpadZone');
     const volumeZone = document.getElementById('volumeZone');
-    const volumeControl = document.getElementById('volumeControl');
-    const volumeRail = document.getElementById('volumeRail');
+    const volumeSlider = document.getElementById('volumeSlider');
     const volumeValue = document.getElementById('volumeValue');
     const muteBtn = document.getElementById('muteBtn');
     const scrollZone = document.getElementById('scrollZone');
@@ -1172,20 +1144,11 @@
 
     let lastVolumeSent = 0.5;
 
-    function isVolumeRailVertical() {
-      if (window.matchMedia('(orientation: portrait), (max-aspect-ratio: 3 / 4)').matches) {
-        return false;
-      }
-
-      const rect = volumeRail.getBoundingClientRect();
-      return rect.height > rect.width * 1.5;
-    }
-
     function renderVolume(value) {
       const percent = Math.round(value * 100);
       volumeValue.textContent = `${percent}%`;
-      volumeControl.style.setProperty('--volume-level', `${percent}%`);
-      volumeRail.setAttribute('aria-valuenow', String(percent));
+      volumeSlider.style.setProperty('--volume-level', `${percent}%`);
+      volumeSlider.setAttribute('aria-valuenow', String(percent));
     }
 
     function setVolumeValue(value) {
@@ -1200,12 +1163,9 @@
     }
 
     function setVolumeFromPoint(event) {
-      const rect = volumeRail.getBoundingClientRect();
-      const value = isVolumeRailVertical()
-        ? (rect.bottom - event.clientY) / rect.height
-        : (event.clientX - rect.left) / rect.width;
-
-      setVolumeValue(value);
+      const rect = volumeSlider.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      setVolumeValue((event.clientX - rect.left) / rect.width);
     }
 
     let volumePointerId = null;
@@ -1234,7 +1194,7 @@
     volumeZone.addEventListener('pointerup', releaseVolume);
     volumeZone.addEventListener('pointercancel', releaseVolume);
 
-    volumeRail.addEventListener('keydown', (event) => {
+    volumeSlider.addEventListener('keydown', (event) => {
       const step = event.shiftKey ? 0.1 : 0.05;
       if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -1249,13 +1209,36 @@
     window.visualViewport?.addEventListener('resize', () => renderVolume(lastVolumeSent));
     renderVolume(lastVolumeSent);
 
+    let lastMuteToggleAt = 0;
+
+    function toggleMute(event) {
+      const now = performance.now();
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (now - lastMuteToggleAt < 350) {
+        return;
+      }
+
+      lastMuteToggleAt = now;
+      send({ type: 'togglemute' });
+    }
+
     muteBtn.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
       event.stopPropagation();
     });
 
+    muteBtn.addEventListener('pointerup', toggleMute);
+
     muteBtn.addEventListener('click', (event) => {
-      event.preventDefault();
-      send({ type: 'togglemute' });
+      if (performance.now() - lastMuteToggleAt < 350) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      toggleMute(event);
     });
 
     rightZone.addEventListener('pointerdown', (event) => {
