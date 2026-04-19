@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>LINKA</title>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#080a0c">
+  <style>
+    :root {
+      --bg: #080a0c;
+      --panel: #11161a;
+      --panel-2: #151c21;
+      --line: rgba(255, 255, 255, 0.08);
+      --text: #eef4f2;
+      --muted: #7f918b;
+      --accent: #00d98b;
+      --accent-soft: rgba(0, 217, 139, 0.14);
+      --warn: #ff426f;
+      --warn-soft: rgba(255, 66, 111, 0.14);
+      --scroll: #75a7ff;
+      --scroll-soft: rgba(117, 167, 255, 0.13);
+      --radius: 8px;
+      font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      touch-action: none;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+      background: var(--bg);
+      color: var(--text);
+      position: fixed;
+      inset: 0;
+    }
+
+    body {
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    .app {
+      width: 100vw;
+      height: var(--app-height, 100dvh);
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      background:
+        linear-gradient(90deg, rgba(0, 217, 139, 0.06), transparent 28%),
+        linear-gradient(270deg, rgba(117, 167, 255, 0.06), transparent 32%),
+        var(--bg);
+    }
+
+    .app.keyboard-open {
+      grid-template-rows: 52px auto minmax(0, 1fr);
+    }
+
+    .statusbar {
+      position: relative;
+      grid-row: 1;
+      min-height: 52px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(8, 10, 12, 0.86);
+    }
+
+    .statusbar,
+    .keyboard-tools {
+      flex-shrink: 0;
+    }
+
+    .brand {
+      display: none;
+      align-items: center;
+      min-width: 0;
+      gap: 9px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--accent);
+      border-radius: 5px;
+      box-shadow: 0 0 18px rgba(0, 217, 139, 0.35);
+    }
+
+    .status {
+      position: fixed;
+      left: -9999px;
+      top: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 112px;
+      justify-content: flex-end;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .status[data-state="connecting"] .status-dot {
+      background: #f0bf4f;
+    }
+
+    .status[data-state="connected"] {
+      color: var(--accent);
+    }
+
+    .status[data-state="connected"] .status-dot {
+      background: var(--accent);
+      box-shadow: 0 0 16px rgba(0, 217, 139, 0.6);
+    }
+
+    .status[data-state="disconnected"] {
+      color: var(--warn);
+    }
+
+    .status[data-state="disconnected"] .status-dot {
+      background: var(--warn);
+    }
+
+    .keyboard-button,
+    .key-button,
+    .mute-button,
+    .fullscreen-button {
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      touch-action: manipulation;
+    }
+
+    .primary-controls {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .top-button,
+    .fullscreen-button {
+      width: 100%;
+      min-width: 0;
+    }
+
+    .fullscreen-button {
+      display: grid;
+      place-items: center;
+      padding: 0;
+    }
+
+    .fullscreen-button svg {
+      width: 18px;
+      height: 18px;
+      pointer-events: none;
+    }
+
+    .key-button.active {
+      border-color: var(--accent);
+      background: rgba(0, 217, 139, 0.18);
+      color: var(--accent);
+    }
+
+    .icon-key {
+      display: grid;
+      place-items: center;
+      padding: 0;
+    }
+
+    .icon-key img {
+      width: 24px;
+      height: 24px;
+      display: block;
+      pointer-events: none;
+    }
+
+    .keyboard-tools {
+      position: relative;
+      grid-row: 2;
+      z-index: 900;
+      display: none;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(8, 10, 12, 0.94);
+    }
+
+    .keyboard-tools.visible {
+      display: grid;
+    }
+
+    .keyboard-input {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0.01;
+      border: 0;
+      padding: 0;
+      color: transparent;
+      background: transparent;
+      pointer-events: none;
+      user-select: text;
+      touch-action: auto;
+    }
+
+    .fatal-error {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 1000;
+      display: none;
+      padding: 12px;
+      border: 1px solid rgba(255, 66, 111, 0.65);
+      border-radius: 8px;
+      background: #211016;
+      color: #ffdce5;
+      font-size: 13px;
+      line-height: 1.35;
+      user-select: text;
+      touch-action: auto;
+    }
+
+    .fatal-error.visible {
+      display: block;
+    }
+
+    .controller {
+      grid-row: 2;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(86px, 20vw) minmax(220px, 1fr) minmax(86px, 18vw);
+      gap: 8px;
+      padding: 8px;
+    }
+
+    .app.keyboard-open .controller {
+      grid-row: 3;
+    }
+
+    .zone,
+    .cluster {
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .zone {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      transition: border-color 80ms linear, background 80ms linear, transform 80ms linear;
+    }
+
+    .zone.active {
+      transform: scale(0.995);
+    }
+
+    .zone-title {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: rgba(238, 244, 242, 0.52);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    .zone-icon {
+      width: 30px;
+      height: 30px;
+      color: rgba(238, 244, 242, 0.24);
+      pointer-events: none;
+    }
+
+    .drag-zone {
+      background: linear-gradient(90deg, var(--accent-soft), rgba(17, 22, 26, 0.96));
+    }
+
+    .drag-zone.active {
+      border-color: var(--accent);
+      background: linear-gradient(90deg, rgba(0, 217, 139, 0.28), rgba(17, 22, 26, 0.96));
+    }
+
+    .trackpad-zone {
+      background:
+        radial-gradient(circle at center, rgba(0, 217, 139, 0.08), transparent 42%),
+        linear-gradient(135deg, #12191d, #090d10);
+    }
+
+    .trackpad-zone::before {
+      content: "";
+      position: absolute;
+      width: min(42vw, 250px);
+      aspect-ratio: 1;
+      border: 1px solid rgba(0, 217, 139, 0.18);
+      border-radius: 50%;
+      opacity: 0.55;
+      pointer-events: none;
+    }
+
+    .trackpad-zone.active {
+      border-color: rgba(0, 217, 139, 0.72);
+      background:
+        radial-gradient(circle at center, rgba(0, 217, 139, 0.16), transparent 44%),
+        linear-gradient(135deg, #12191d, #090d10);
+    }
+
+    .cursor-dot {
+      position: absolute;
+      width: 9px;
+      height: 9px;
+      margin: -4px 0 0 -4px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 18px rgba(0, 217, 139, 0.6);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate3d(0, 0, 0);
+    }
+
+    .trackpad-zone.active .cursor-dot {
+      opacity: 1;
+    }
+
+    .volume-zone {
+      display: grid;
+      grid-template-rows: 1fr;
+      align-items: center;
+      padding: 32px 12px 12px;
+      background: linear-gradient(270deg, rgba(0, 217, 139, 0.12), rgba(17, 22, 26, 0.96));
+    }
+
+    .volume-control {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      align-items: center;
+      touch-action: none;
+    }
+
+    .volume-shell {
+      width: 100%;
+      height: 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+    }
+
+    .volume-rail {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      min-height: 16px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.13);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+
+    .volume-fill {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: var(--volume-level, 50%);
+      min-height: 3px;
+      border-radius: inherit;
+      background: rgba(43, 128, 31, 0.95);
+      pointer-events: none;
+    }
+
+    .volume-knob {
+      display: none;
+    }
+
+    .volume-value {
+      position: fixed;
+      left: -9999px;
+      top: auto;
+    }
+
+    .cluster {
+      grid-column: 3;
+      display: grid;
+      grid-template-rows: minmax(96px, 30%) 1fr minmax(76px, 24%);
+      gap: 8px;
+    }
+
+    .volume-zone.active {
+      border-color: var(--accent);
+      background: linear-gradient(270deg, rgba(0, 217, 139, 0.24), rgba(17, 22, 26, 0.96));
+    }
+
+    .scroll-zone {
+      background: linear-gradient(270deg, var(--scroll-soft), rgba(17, 22, 26, 0.96));
+    }
+
+    .scroll-zone.active {
+      border-color: var(--scroll);
+      background: linear-gradient(270deg, rgba(117, 167, 255, 0.28), rgba(17, 22, 26, 0.96));
+    }
+
+    .right-zone {
+      background: linear-gradient(270deg, var(--warn-soft), rgba(17, 22, 26, 0.96));
+    }
+
+    .right-zone.active {
+      border-color: var(--warn);
+      background: linear-gradient(270deg, rgba(255, 66, 111, 0.24), rgba(17, 22, 26, 0.96));
+    }
+
+    @media (orientation: portrait), (max-aspect-ratio: 3 / 4) {
+      .app {
+        grid-template-rows: 52px auto minmax(0, 1fr);
+      }
+
+      .controller {
+        grid-row: 3;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) clamp(32px, 10vw, 44px);
+        grid-template-rows: 30px minmax(0, 1fr) 64px;
+        grid-template-areas:
+          "volume volume volume"
+          "trackpad trackpad scroll"
+          "hold right right";
+        gap: 8px;
+        height: 100%;
+        padding: 8px 10px 10px;
+      }
+
+      .trackpad-zone {
+        grid-area: trackpad;
+      }
+
+      .drag-zone {
+        grid-area: hold;
+      }
+
+      .cluster {
+        display: contents;
+      }
+
+      .volume-zone {
+        grid-area: volume;
+        padding: 16px 10px 4px;
+      }
+
+      .volume-control {
+        position: relative;
+        width: 100%;
+        min-width: 0;
+        height: 100%;
+        min-height: 28px;
+      }
+
+      .volume-shell {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        top: 16px;
+        bottom: 4px;
+        width: 100%;
+        min-width: 0;
+      }
+
+      .volume-rail {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        min-width: 0;
+        height: 100%;
+        min-height: 14px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.10);
+      }
+
+      .volume-fill {
+        top: 0;
+        right: auto;
+        bottom: 0;
+        left: 0;
+        width: var(--volume-level, 50%);
+        height: 100%;
+        min-width: 12px;
+        min-height: 0;
+        background: rgba(43, 128, 31, 0.98);
+      }
+
+      .volume-knob {
+        display: none;
+      }
+    }
+
+    @media (orientation: portrait), (max-aspect-ratio: 3 / 4) {
+      .volume-zone .volume-rail {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .volume-zone .zone-title {
+        display: block;
+        top: 5px;
+        left: 10px;
+      }
+
+      .scroll-zone {
+        grid-area: scroll;
+        min-width: 0;
+      }
+
+      .right-zone {
+        grid-area: right;
+      }
+
+      .scroll-zone .zone-title {
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+      }
+
+      .right-zone .zone-title,
+      .drag-zone .zone-title {
+        writing-mode: horizontal-tb;
+        transform: none;
+      }
+
+      .zone-icon {
+        width: 24px;
+        height: 24px;
+      }
+    }
+
+    @media (orientation: landscape) and (min-aspect-ratio: 4 / 3) {
+      .app.keyboard-open {
+        grid-template-rows: 52px minmax(0, 1fr);
+      }
+
+      .keyboard-tools.visible {
+        display: none;
+      }
+
+      .app.keyboard-open .controller {
+        grid-row: 2;
+      }
+    }
+
+    @media (orientation: portrait), (max-aspect-ratio: 3 / 4) {
+      .app.is-fullscreen {
+        grid-template-rows: 44px auto minmax(0, 1fr);
+      }
+
+      .app.is-fullscreen .statusbar {
+        min-height: 44px;
+        padding: 5px 8px;
+        grid-template-columns: minmax(0, 1fr) 38px;
+      }
+
+      .app.is-fullscreen .keyboard-button,
+      .app.is-fullscreen .key-button,
+      .app.is-fullscreen .mute-button,
+      .app.is-fullscreen .fullscreen-button {
+        height: 32px;
+        font-size: 10px;
+      }
+
+      .app.is-fullscreen .primary-controls {
+        gap: 6px;
+      }
+
+      .app.is-fullscreen .controller {
+        grid-template-rows: 22px minmax(0, 1fr) 46px;
+        gap: 4px;
+        padding: 4px 7px 5px;
+      }
+
+      .app.is-fullscreen .volume-control {
+        min-height: 20px;
+      }
+
+      .app.is-fullscreen.keyboard-open .keyboard-tools {
+        gap: 4px;
+        padding: 4px 6px;
+      }
+
+      .app.is-fullscreen.keyboard-open .controller {
+        grid-template-rows: 20px minmax(0, 1fr) 42px;
+        gap: 4px;
+        padding-bottom: 4px;
+      }
+    }
+
+    @media (max-width: 430px) and (orientation: portrait), (max-width: 430px) and (max-aspect-ratio: 3 / 4) {
+      .brand {
+        font-size: 12px;
+      }
+
+      .status {
+        min-width: 98px;
+        font-size: 10px;
+      }
+
+      .zone-title {
+        font-size: 9px;
+      }
+
+      .controller {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
+        grid-template-rows: 28px minmax(0, 1fr) 60px;
+        grid-template-areas:
+          "volume volume volume"
+          "trackpad trackpad scroll"
+          "hold right right";
+        gap: 6px;
+        padding: 6px;
+      }
+
+      .keyboard-tools {
+        gap: 6px;
+        padding: 6px;
+      }
+    }
+
+    @media (max-width: 430px) and (orientation: portrait), (max-width: 430px) and (max-aspect-ratio: 3 / 4) {
+      .app.is-fullscreen .controller {
+        grid-template-rows: 24px minmax(0, 1fr) 52px;
+        gap: 4px;
+        padding: 4px 6px 8px;
+      }
+
+      .app.is-fullscreen .drag-zone,
+      .app.is-fullscreen .right-zone {
+        min-height: 0;
+      }
+
+      .app.is-fullscreen.keyboard-open .controller {
+        grid-template-rows: 20px minmax(0, 1fr) 48px;
+        padding-bottom: 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app" aria-label="LINKA controller">
+    <header class="statusbar">
+      <div class="brand"><span class="brand-mark"></span><span>LINKA</span></div>
+      <div class="primary-controls" aria-label="Primary controls">
+        <button id="keyboardBtn" class="keyboard-button top-button" type="button">Keyboard</button>
+        <button id="muteBtn" class="mute-button top-button" type="button">Mute</button>
+        <button class="key-button top-button" type="button" data-key="enter">Enter</button>
+      </div>
+      <button id="fullscreenBtn" class="fullscreen-button" type="button" aria-label="Toggle full screen" title="Full screen">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </button>
+      <div id="status" class="status" data-state="connecting"><span class="status-dot"></span><span id="statusText">Connecting</span></div>
+    </header>
+
+    <div id="keyboardTools" class="keyboard-tools" aria-label="Keyboard shortcuts">
+      <button id="ctrlBtn" class="key-button" type="button" data-modifier="ctrl">Ctrl</button>
+      <button class="key-button icon-key" type="button" data-key="backspace" aria-label="Backspace">
+        <img src="keyboard_backspace_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.png" alt="">
+      </button>
+      <button class="key-button" type="button" data-key="escape">Esc</button>
+      <button class="key-button" type="button" data-key="tab">Tab</button>
+    </div>
+    <input id="keyboardInput" class="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="text" aria-label="Native keyboard input">
+
+    <section class="controller">
+      <div id="dragZone" class="zone drag-zone" data-control="drag">
+        <span class="zone-title">Hold</span>
+        <svg class="zone-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      </div>
+
+      <div id="trackpadZone" class="zone trackpad-zone" data-control="trackpad">
+        <span class="zone-title">Trackpad</span>
+        <span id="cursorDot" class="cursor-dot"></span>
+      </div>
+
+      <div class="cluster">
+        <div id="volumeZone" class="zone volume-zone" data-control="volume">
+          <span class="zone-title">Volume</span>
+          <div id="volumeControl" class="volume-control">
+            <div id="volumeShell" class="volume-shell">
+              <div id="volumeRail" class="volume-rail" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0">
+                <div id="volumeFill" class="volume-fill"></div>
+                <span id="volumeKnob" class="volume-knob"></span>
+              </div>
+              <span id="volumeValue" class="volume-value">50%</span>
+            </div>
+          </div>
+        </div>
+        <div id="scrollZone" class="zone scroll-zone" data-control="scroll">
+          <span class="zone-title">Scroll</span>
+          <svg class="zone-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 5h8M8 12h8M8 19h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+          </svg>
+        </div>
+        <div id="rightZone" class="zone right-zone" data-control="right-click">
+          <span class="zone-title">Right</span>
+          <svg class="zone-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="3" width="16" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="2"></rect>
+            <path d="M12 3v7M4 10h16" fill="none" stroke="currentColor" stroke-width="2"></path>
+          </svg>
+        </div>
+      </div>
+    </section>
+  </main>
+  <noscript><div class="fatal-error visible">JavaScript is disabled. LINKA needs JavaScript to run.</div></noscript>
+  <div id="fatalError" class="fatal-error" role="alert"></div>
+
+  <script>
+    const fatalErrorEl = document.getElementById('fatalError');
+    const appEl = document.querySelector('.app');
+    function showClientError(message) {
+      if (!fatalErrorEl) return;
+      fatalErrorEl.textContent = message;
+      fatalErrorEl.classList.add('visible');
+    }
+
+    function clearClientError() {
+      if (!fatalErrorEl) return;
+      fatalErrorEl.textContent = '';
+      fatalErrorEl.classList.remove('visible');
+    }
+
+    window.addEventListener('error', (event) => {
+      showClientError(`LINKA client error: ${event.message || 'unknown error'}`);
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      showClientError(`LINKA client promise error: ${event.reason?.message || event.reason || 'unknown error'}`);
+    });
+
+    const statusEl = document.getElementById('status');
+    const statusText = document.getElementById('statusText');
+    const keyboardBtn = document.getElementById('keyboardBtn');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const keyboardTools = document.getElementById('keyboardTools');
+    const keyboardInput = document.getElementById('keyboardInput');
+    const ctrlBtn = document.getElementById('ctrlBtn');
+    const dragZone = document.getElementById('dragZone');
+    const trackpadZone = document.getElementById('trackpadZone');
+    const volumeZone = document.getElementById('volumeZone');
+    const volumeControl = document.getElementById('volumeControl');
+    const volumeRail = document.getElementById('volumeRail');
+    const volumeValue = document.getElementById('volumeValue');
+    const muteBtn = document.getElementById('muteBtn');
+    const scrollZone = document.getElementById('scrollZone');
+    const rightZone = document.getElementById('rightZone');
+    const cursorDot = document.getElementById('cursorDot');
+
+    const SENSITIVITY = 1.45;
+    const SCROLL_SENSITIVITY = 0.65;
+    const TAP_MAX_MS = 220;
+    const TAP_MOVE_TOLERANCE = 7;
+
+    let socket;
+    let reconnectTimer = 0;
+    let reconnectDelay = 650;
+    let isConnected = false;
+    let keyboardOpen = false;
+    let ctrlArmed = false;
+
+    function syncViewportHeight() {
+      const height = window.visualViewport?.height || window.innerHeight;
+      document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+    }
+
+    function setStatus(state, label) {
+      statusEl.dataset.state = state;
+      statusText.textContent = label;
+    }
+
+    function connect() {
+      clearTimeout(reconnectTimer);
+      setStatus('connecting', 'Connecting');
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${protocol}//${window.location.host}`);
+
+      socket.onopen = () => {
+        isConnected = true;
+        reconnectDelay = 650;
+        clearClientError();
+        setStatus('connected', 'Connected');
+      };
+
+      socket.onclose = () => {
+        isConnected = false;
+        setStatus('disconnected', 'Offline');
+        reconnectTimer = window.setTimeout(connect, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 1.6, 5000);
+      };
+
+      socket.onerror = (event) => {
+        socket.close();
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'hello' && !data.nativeInputReady) {
+            setStatus('connected', 'Test mode');
+          }
+        } catch (_error) {
+          // Ignore non-control server messages.
+        }
+      };
+    }
+
+    function send(data) {
+      if (isConnected && socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(data));
+      }
+    }
+
+    function activate(zone, active) {
+      zone.classList.toggle('active', active);
+    }
+
+    function capturePointer(zone, event) {
+      event.preventDefault();
+      zone.setPointerCapture(event.pointerId);
+      activate(zone, true);
+    }
+
+    syncViewportHeight();
+    window.addEventListener('resize', syncViewportHeight);
+    window.visualViewport?.addEventListener('resize', syncViewportHeight);
+    window.visualViewport?.addEventListener('scroll', syncViewportHeight);
+
+    connect();
+
+    function setKeyboardOpen(open) {
+      keyboardOpen = Boolean(open);
+      appEl.classList.toggle('keyboard-open', keyboardOpen);
+      keyboardTools.classList.toggle('visible', keyboardOpen);
+      keyboardBtn.setAttribute('aria-pressed', keyboardOpen ? 'true' : 'false');
+      keyboardBtn.textContent = keyboardOpen ? 'Close' : 'Keyboard';
+      syncViewportHeight();
+
+      if (keyboardOpen) {
+        keyboardInput.focus({ preventScroll: true });
+      } else {
+        setCtrlArmed(false);
+        keyboardInput.blur();
+      }
+    }
+
+    function setCtrlArmed(active) {
+      ctrlArmed = Boolean(active);
+      ctrlBtn.classList.toggle('active', ctrlArmed);
+      ctrlBtn.setAttribute('aria-pressed', ctrlArmed ? 'true' : 'false');
+    }
+
+    function consumeCtrlShortcut(text) {
+      if (!ctrlArmed || !text || text.length !== 1) return false;
+
+      const key = text.toLowerCase();
+      if (!['z', 'c', 'v'].includes(key)) return false;
+
+      send({ type: 'keytap', key, modifiers: ['ctrl'] });
+      setCtrlArmed(false);
+      return true;
+    }
+
+    keyboardBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      setKeyboardOpen(!keyboardOpen);
+    });
+
+    function updateFullscreenButton() {
+      const isFullscreen = Boolean(document.fullscreenElement);
+      appEl.classList.toggle('is-fullscreen', isFullscreen);
+      fullscreenBtn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');
+      fullscreenBtn.title = isFullscreen ? 'Exit full screen' : 'Full screen';
+      syncViewportHeight();
+      window.requestAnimationFrame(() => renderVolume(lastVolumeSent));
+    }
+
+    fullscreenBtn.addEventListener('click', async (event) => {
+      event.preventDefault();
+
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (error) {
+        showClientError(`Full screen failed: ${error?.message || error}`);
+      }
+    });
+
+    document.addEventListener('fullscreenchange', updateFullscreenButton);
+    updateFullscreenButton();
+
+    keyboardInput.addEventListener('beforeinput', (event) => {
+      if (event.inputType === 'insertText' && event.data) {
+        if (!consumeCtrlShortcut(event.data)) {
+          send({ type: 'type', text: event.data });
+        }
+        event.preventDefault();
+      } else if (event.inputType === 'insertFromPaste' && event.data) {
+        if (!consumeCtrlShortcut(event.data)) {
+          send({ type: 'type', text: event.data });
+        }
+        event.preventDefault();
+      } else if (event.inputType === 'deleteContentBackward') {
+        send({ type: 'keytap', key: 'backspace' });
+        event.preventDefault();
+      } else if (event.inputType === 'insertLineBreak') {
+        send({ type: 'keytap', key: 'enter' });
+        event.preventDefault();
+      }
+      keyboardInput.value = '';
+    });
+
+    keyboardInput.addEventListener('input', () => {
+      if (keyboardInput.value) {
+        if (!consumeCtrlShortcut(keyboardInput.value)) {
+          send({ type: 'type', text: keyboardInput.value });
+        }
+        keyboardInput.value = '';
+      }
+    });
+
+    document.addEventListener('click', (event) => {
+      const modifierButton = event.target.closest('[data-modifier]');
+      if (modifierButton) {
+        event.preventDefault();
+        setCtrlArmed(!ctrlArmed);
+        keyboardInput.focus({ preventScroll: true });
+        return;
+      }
+
+      const button = event.target.closest('[data-key]');
+      if (!button) return;
+      event.preventDefault();
+      send({ type: 'keytap', key: button.dataset.key });
+      setCtrlArmed(false);
+      if (keyboardOpen) {
+        keyboardInput.focus({ preventScroll: true });
+      }
+    });
+
+    const track = {
+      pointers: new Map(),
+      primaryId: null,
+      startTime: 0,
+      startX: 0,
+      startY: 0,
+      lastX: 0,
+      lastY: 0,
+      moved: false,
+      multiTouch: false,
+    };
+
+    trackpadZone.addEventListener('pointerdown', (event) => {
+      capturePointer(trackpadZone, event);
+      track.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (track.primaryId === null) {
+        track.primaryId = event.pointerId;
+        track.startTime = performance.now();
+        track.startX = event.clientX;
+        track.startY = event.clientY;
+        track.lastX = event.clientX;
+        track.lastY = event.clientY;
+        track.moved = false;
+        track.multiTouch = false;
+      } else {
+        track.multiTouch = true;
+      }
+
+      cursorDot.style.transform = `translate3d(${event.offsetX}px, ${event.offsetY}px, 0)`;
+    });
+
+    trackpadZone.addEventListener('pointermove', (event) => {
+      if (!track.pointers.has(event.pointerId)) return;
+      event.preventDefault();
+      track.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (event.pointerId !== track.primaryId || track.multiTouch) return;
+
+      const dx = (event.clientX - track.lastX) * SENSITIVITY;
+      const dy = (event.clientY - track.lastY) * SENSITIVITY;
+      const totalMove = Math.hypot(event.clientX - track.startX, event.clientY - track.startY);
+
+      if (totalMove > TAP_MOVE_TOLERANCE) {
+        track.moved = true;
+      }
+
+      if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
+        send({ type: 'move', dx, dy });
+      }
+
+      track.lastX = event.clientX;
+      track.lastY = event.clientY;
+      cursorDot.style.transform = `translate3d(${event.offsetX}px, ${event.offsetY}px, 0)`;
+    });
+
+    function endTrackPointer(event) {
+      if (!track.pointers.has(event.pointerId)) return;
+      event.preventDefault();
+      track.pointers.delete(event.pointerId);
+
+      if (track.pointers.size === 0) {
+        const duration = performance.now() - track.startTime;
+        if (!track.moved && duration < TAP_MAX_MS) {
+          send({ type: 'click', button: track.multiTouch ? 'right' : 'left' });
+        }
+
+        track.primaryId = null;
+        track.multiTouch = false;
+        activate(trackpadZone, false);
+      }
+    }
+
+    trackpadZone.addEventListener('pointerup', endTrackPointer);
+    trackpadZone.addEventListener('pointercancel', endTrackPointer);
+
+    dragZone.addEventListener('pointerdown', (event) => {
+      capturePointer(dragZone, event);
+      send({ type: 'mousedown', button: 'left' });
+    });
+
+    function releaseDrag(event) {
+      event.preventDefault();
+      activate(dragZone, false);
+      send({ type: 'mouseup', button: 'left' });
+    }
+
+    dragZone.addEventListener('pointerup', releaseDrag);
+    dragZone.addEventListener('pointercancel', releaseDrag);
+
+    let scrollPointerId = null;
+    let lastScrollY = 0;
+
+    scrollZone.addEventListener('pointerdown', (event) => {
+      capturePointer(scrollZone, event);
+      scrollPointerId = event.pointerId;
+      lastScrollY = event.clientY;
+    });
+
+    scrollZone.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== scrollPointerId) return;
+      event.preventDefault();
+      const dy = (lastScrollY - event.clientY) * SCROLL_SENSITIVITY;
+      if (Math.abs(dy) >= 1) {
+        send({ type: 'scroll', dy: Math.round(dy) });
+        lastScrollY = event.clientY;
+      }
+    });
+
+    function releaseScroll(event) {
+      if (event.pointerId !== scrollPointerId) return;
+      event.preventDefault();
+      scrollPointerId = null;
+      activate(scrollZone, false);
+    }
+
+    scrollZone.addEventListener('pointerup', releaseScroll);
+    scrollZone.addEventListener('pointercancel', releaseScroll);
+
+    let lastVolumeSent = 0.5;
+
+    function isVolumeRailVertical() {
+      if (window.matchMedia('(orientation: portrait), (max-aspect-ratio: 3 / 4)').matches) {
+        return false;
+      }
+
+      const rect = volumeRail.getBoundingClientRect();
+      return rect.height > rect.width * 1.5;
+    }
+
+    function renderVolume(value) {
+      const percent = Math.round(value * 100);
+      volumeValue.textContent = `${percent}%`;
+      volumeControl.style.setProperty('--volume-level', `${percent}%`);
+      volumeRail.setAttribute('aria-valuenow', String(percent));
+    }
+
+    function setVolumeValue(value) {
+      const clamped = Math.max(0, Math.min(1, value));
+      renderVolume(clamped);
+
+      if (Math.abs(clamped - lastVolumeSent) >= 0.01) {
+        send({ type: 'volume', value: clamped });
+      }
+
+      lastVolumeSent = clamped;
+    }
+
+    function setVolumeFromPoint(event) {
+      const rect = volumeRail.getBoundingClientRect();
+      const value = isVolumeRailVertical()
+        ? (rect.bottom - event.clientY) / rect.height
+        : (event.clientX - rect.left) / rect.width;
+
+      setVolumeValue(value);
+    }
+
+    let volumePointerId = null;
+
+    volumeZone.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      volumePointerId = event.pointerId;
+      volumeZone.setPointerCapture(event.pointerId);
+      activate(volumeZone, true);
+      setVolumeFromPoint(event);
+    });
+
+    volumeZone.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== volumePointerId) return;
+      event.preventDefault();
+      setVolumeFromPoint(event);
+    });
+
+    function releaseVolume(event) {
+      if (event.pointerId !== volumePointerId) return;
+      event.preventDefault();
+      volumePointerId = null;
+      activate(volumeZone, false);
+    }
+
+    volumeZone.addEventListener('pointerup', releaseVolume);
+    volumeZone.addEventListener('pointercancel', releaseVolume);
+
+    volumeRail.addEventListener('keydown', (event) => {
+      const step = event.shiftKey ? 0.1 : 0.05;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        setVolumeValue(lastVolumeSent + step);
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        setVolumeValue(lastVolumeSent - step);
+      }
+    });
+
+    window.addEventListener('resize', () => renderVolume(lastVolumeSent));
+    window.visualViewport?.addEventListener('resize', () => renderVolume(lastVolumeSent));
+    renderVolume(lastVolumeSent);
+
+    muteBtn.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+    });
+
+    muteBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      send({ type: 'togglemute' });
+    });
+
+    rightZone.addEventListener('pointerdown', (event) => {
+      capturePointer(rightZone, event);
+      send({ type: 'click', button: 'right' });
+    });
+
+    function releaseRight(event) {
+      event.preventDefault();
+      activate(rightZone, false);
+    }
+
+    rightZone.addEventListener('pointerup', releaseRight);
+    rightZone.addEventListener('pointercancel', releaseRight);
+
+    window.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+    });
+
+    window.addEventListener('gesturestart', (event) => {
+      event.preventDefault();
+    });
+  </script>
+</body>
+</html>

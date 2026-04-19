@@ -1,0 +1,61 @@
+{
+  "name": "linka",
+  "version": "0.0.0",
+  "description": "A local phone trackpad, keyboard, and volume controller for Windows.",
+  "license": "MIT",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node server.js",
+    "dev:electron": "electron .",
+    "build": "vite build",
+    "start": "node server.js",
+    "lint": "tsc --noEmit",
+    "build:native:win": "dotnet publish native/win-input/Linka.NativeInput.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true",
+    "rebuild:native": "electron-rebuild -f -w robotjs",
+    "apply:win-icon": "node scripts/apply-windows-icon.cjs",
+    "build:win": "npm run build:native:win && npm run build && electron-builder --win portable && npm run apply:win-icon",
+    "build:win:unpacked": "npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon",
+    "build:win:portable": "npm run build:win"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/ws": "^8.18.1",
+    "electron": "^41.1.0",
+    "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  },
+  "build": {
+    "appId": "com.linka.desktop",
+    "productName": "Linka",
+    "artifactName": "Linka.${ext}",
+    "directories": {
+      "output": "dist_electron"
+    },
+    "files": [
+      "build/icon.ico",
+      "dist/**/*",
+      "main.js",
+      "connection-preload.cjs",
+      "server.js",
+      "input-adapter.js",
+      "native/win-input/bin/Release/net8.0/win-x64/publish/**/*",
+      "index.html",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "asar": false
+  }
+}

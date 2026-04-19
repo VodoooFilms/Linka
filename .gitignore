@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist_electron/
+release/
+out/
+*.asar
+
+# Native build output
+native/**/bin/
+native/**/obj/
+
+# Keep the application icon, ignore other generated build assets
+build/*
+!build/icon.ico
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Coverage and caches
+coverage/
+.vite/
+.cache/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
