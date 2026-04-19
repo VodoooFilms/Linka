@@ -135,6 +135,9 @@ function handleCommand(input, data) {
     case 'scroll':
       input.scroll(normalizeNumber(data.dy, 0, -1200, 1200));
       break;
+    case 'zoom':
+      input.zoom(data.direction === 'out' ? 'out' : 'in');
+      break;
     case 'type':
       input.type(data.text || '');
       break;

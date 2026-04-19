@@ -87,6 +87,9 @@ function createWindowsSendInputAdapter() {
     scroll(dy) {
       send({ type: 'scroll', dy: clampNumber(dy, -1200, 1200) });
     },
+    zoom(direction = 'in') {
+      send({ type: 'zoom', direction: direction === 'out' ? 'out' : 'in' });
+    },
     type(text = '') {
       if (text) send({ type: 'type', text: String(text) });
     },
@@ -142,6 +145,15 @@ async function createRobotAdapter() {
       scroll(dy) {
         robot.scrollMouse(0, Math.round(dy));
       },
+      zoom(direction = 'in') {
+        const amount = direction === 'out' ? -5 : 5;
+        robot.keyToggle('control', 'down');
+        try {
+          robot.scrollMouse(0, amount);
+        } finally {
+          robot.keyToggle('control', 'up');
+        }
+      },
       type(text = '') {
         robot.typeString(String(text));
       },
@@ -184,6 +196,9 @@ function createLogOnlyAdapter() {
     },
     scroll(dy) {
       console.log(`[input:log] scroll dy=${dy}`);
+    },
+    zoom(direction = 'in') {
+      console.log(`[input:log] zoom ${direction === 'out' ? 'out' : 'in'}`);
     },
     type(text = '') {
       console.log(`[input:log] type ${text}`);

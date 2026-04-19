@@ -13,6 +13,7 @@ internal static class Program
     private const uint MOUSEEVENTF_WHEEL = 0x0800;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_UNICODE = 0x0004;
+    private const int VK_CONTROL = 0x11;
     private static readonly Guid VolumeEventContext = Guid.NewGuid();
 
     private static int Main()
@@ -54,6 +55,9 @@ internal static class Program
                 break;
             case "scroll":
                 Scroll(GetInt(command, "dy"));
+                break;
+            case "zoom":
+                Zoom(GetString(command, "direction") ?? "in");
                 break;
             case "type":
                 TypeText(GetString(command, "text") ?? string.Empty);
@@ -109,6 +113,15 @@ internal static class Program
         {
             SendMouse(0, 0, wheelData, MOUSEEVENTF_WHEEL);
         }
+    }
+
+    private static void Zoom(string direction)
+    {
+        var wheelData = direction.Equals("out", StringComparison.OrdinalIgnoreCase) ? -120 : 120;
+
+        SendKeyboard('\0', VK_CONTROL, 0);
+        SendMouse(0, 0, wheelData, MOUSEEVENTF_WHEEL);
+        SendKeyboard('\0', VK_CONTROL, KEYEVENTF_KEYUP);
     }
 
     private static void TypeText(string text)

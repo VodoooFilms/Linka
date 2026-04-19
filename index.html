@@ -796,6 +796,8 @@
 
     const SENSITIVITY = 1.45;
     const SCROLL_SENSITIVITY = 0.65;
+    const PINCH_ZOOM_THRESHOLD = 18;
+    const PINCH_MAX_STEPS_PER_MOVE = 3;
     const TAP_MAX_MS = 220;
     const TAP_MOVE_TOLERANCE = 7;
 
@@ -999,7 +1001,54 @@
       lastY: 0,
       moved: false,
       multiTouch: false,
+      pinchDistance: 0,
+      pinchActive: false,
     };
+
+    function getPinchDistance() {
+      if (track.pointers.size < 2) return 0;
+      const points = Array.from(track.pointers.values()).slice(0, 2);
+      return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+    }
+
+    function resetPinchGesture() {
+      track.pinchDistance = 0;
+      track.pinchActive = false;
+    }
+
+    function startPinchGesture() {
+      track.pinchDistance = getPinchDistance();
+      track.pinchActive = track.pinchDistance > 0;
+    }
+
+    function handlePinchGesture() {
+      if (track.pointers.size < 2) {
+        resetPinchGesture();
+        return;
+      }
+
+      if (!track.pinchActive) {
+        startPinchGesture();
+        return;
+      }
+
+      const distance = getPinchDistance();
+      const delta = distance - track.pinchDistance;
+      const steps = Math.min(
+        PINCH_MAX_STEPS_PER_MOVE,
+        Math.floor(Math.abs(delta) / PINCH_ZOOM_THRESHOLD),
+      );
+
+      if (steps < 1) return;
+
+      const direction = delta > 0 ? 'in' : 'out';
+      for (let i = 0; i < steps; i += 1) {
+        send({ type: 'zoom', direction });
+      }
+
+      track.moved = true;
+      track.pinchDistance += Math.sign(delta) * steps * PINCH_ZOOM_THRESHOLD;
+    }
 
     trackpadZone.addEventListener('pointerdown', (event) => {
       capturePointer(trackpadZone, event);
@@ -1014,8 +1063,10 @@
         track.lastY = event.clientY;
         track.moved = false;
         track.multiTouch = false;
+        resetPinchGesture();
       } else {
         track.multiTouch = true;
+        startPinchGesture();
       }
 
       cursorDot.style.transform = `translate3d(${event.offsetX}px, ${event.offsetY}px, 0)`;
@@ -1026,7 +1077,12 @@
       event.preventDefault();
       track.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
-      if (event.pointerId !== track.primaryId || track.multiTouch) return;
+      if (track.multiTouch) {
+        handlePinchGesture();
+        return;
+      }
+
+      if (event.pointerId !== track.primaryId) return;
 
       const dx = (event.clientX - track.lastX) * SENSITIVITY;
       const dy = (event.clientY - track.lastY) * SENSITIVITY;
@@ -1058,7 +1114,13 @@
 
         track.primaryId = null;
         track.multiTouch = false;
+        resetPinchGesture();
         activate(trackpadZone, false);
+      } else {
+        resetPinchGesture();
+        if (track.pointers.size >= 2) {
+          startPinchGesture();
+        }
       }
     }
 
