@@ -373,23 +373,30 @@
     .volume-zone {
       grid-column: 3;
       grid-row: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 12px;
+      display: grid;
+      grid-template-rows: 16px minmax(0, 1fr);
+      align-items: stretch;
+      justify-content: stretch;
+      padding: 4px 0 0;
       background: linear-gradient(270deg, rgba(0, 217, 139, 0.12), rgba(17, 22, 26, 0.96));
       touch-action: none;
     }
 
+    .volume-zone .zone-title {
+      position: static;
+      align-self: center;
+      padding-left: 12px;
+      line-height: 1;
+    }
+
     .volume-slider {
-      --volume-level: 50%;
       position: relative;
       width: 100%;
       height: 100%;
       min-width: 0;
-      min-height: 28px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.08);
+      min-height: 0;
+      border-radius: 0;
+      background: linear-gradient(270deg, rgba(77, 198, 151, 0.10), rgba(17, 22, 26, 0.96));
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
       overflow: hidden;
       touch-action: none;
@@ -398,12 +405,16 @@
     .volume-slider::before {
       content: "";
       position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 0;
-      width: var(--volume-level);
-      border-radius: inherit;
-      background: rgba(0, 217, 139, 0.42);
+      inset: 0;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          rgba(238, 244, 242, 0.07) 0,
+          rgba(238, 244, 242, 0.07) 1px,
+          transparent 1px,
+          transparent 22px
+        );
+      opacity: 0.32;
       pointer-events: none;
     }
 
@@ -452,7 +463,7 @@
       .controller {
         grid-row: 3;
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) clamp(32px, 10vw, 44px);
-        grid-template-rows: 50px minmax(0, 1fr) 64px;
+        grid-template-rows: 54px minmax(0, 1fr) 64px;
         grid-template-areas:
           "volume volume volume"
           "trackpad trackpad scroll"
@@ -478,36 +489,42 @@
         grid-column: auto;
         grid-row: auto;
         grid-area: volume;
-        display: flex;
-        align-items: end;
-        justify-content: stretch;
-        padding: 18px 0 2px;
-        background: transparent;
-        border-color: transparent;
+        grid-template-rows: 16px minmax(0, 1fr);
+        background: linear-gradient(270deg, rgba(77, 198, 151, 0.10), rgba(17, 22, 26, 0.96));
+        border-color: var(--line);
       }
 
       .volume-zone.active {
-        background: transparent;
-        border-color: transparent;
+        background: linear-gradient(270deg, rgba(77, 198, 151, 0.16), rgba(17, 22, 26, 0.96));
+        border-color: rgba(77, 198, 151, 0.24);
+      }
+
+      .volume-zone.active .volume-slider {
+        background: rgba(77, 198, 151, 0.10);
+        box-shadow: inset 0 1px 0 rgba(77, 198, 151, 0.14);
       }
 
       .volume-slider {
-        flex: 1 1 auto;
         width: 100%;
         min-width: 0;
-        height: 28px;
-        min-height: 28px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.075);
-        box-shadow:
-          inset 0 0 0 1px rgba(255, 255, 255, 0.055),
-          0 6px 16px rgba(0, 0, 0, 0.18);
+        height: 100%;
+        min-height: 0;
+        border-radius: 0;
+        background: rgba(255, 255, 255, 0.025);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
         overflow: hidden;
       }
 
       .volume-slider::before {
-        min-width: 0;
-        background: linear-gradient(90deg, rgba(0, 217, 139, 0.34), rgba(85, 214, 155, 0.58));
+        background:
+          repeating-linear-gradient(
+            90deg,
+            rgba(238, 244, 242, 0.08) 0,
+            rgba(238, 244, 242, 0.08) 1px,
+            transparent 1px,
+            transparent 22px
+          );
+        opacity: 0.28;
       }
     }
 
@@ -519,8 +536,6 @@
 
       .volume-zone .zone-title {
         display: block;
-        top: 4px;
-        left: 12px;
       }
 
       .scroll-zone {
@@ -768,6 +783,10 @@
 
     const SENSITIVITY = 1.45;
     const SCROLL_SENSITIVITY = 0.65;
+    const VOLUME_DRAG_SENSITIVITY = 0.0035;
+    const VOLUME_DRAG_THRESHOLD = 0.01;
+    const CURSOR_DOT_OFFSET = 72;
+    const CURSOR_DOT_PADDING = 8;
     const PINCH_ZOOM_THRESHOLD = 18;
     const PINCH_MAX_STEPS_PER_MOVE = 3;
     const TAP_MAX_MS = 220;
@@ -1022,6 +1041,20 @@
       track.pinchDistance += Math.sign(delta) * steps * PINCH_ZOOM_THRESHOLD;
     }
 
+    function positionCursorDot(event) {
+      const rect = trackpadZone.getBoundingClientRect();
+      const x = Math.max(
+        CURSOR_DOT_PADDING,
+        Math.min(rect.width - CURSOR_DOT_PADDING, event.clientX - rect.left - CURSOR_DOT_OFFSET),
+      );
+      const y = Math.max(
+        CURSOR_DOT_PADDING,
+        Math.min(rect.height - CURSOR_DOT_PADDING, event.clientY - rect.top - CURSOR_DOT_OFFSET),
+      );
+
+      cursorDot.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    }
+
     trackpadZone.addEventListener('pointerdown', (event) => {
       capturePointer(trackpadZone, event);
       track.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -1041,7 +1074,7 @@
         startPinchGesture();
       }
 
-      cursorDot.style.transform = `translate3d(${event.offsetX}px, ${event.offsetY}px, 0)`;
+      positionCursorDot(event);
     });
 
     trackpadZone.addEventListener('pointermove', (event) => {
@@ -1070,7 +1103,7 @@
 
       track.lastX = event.clientX;
       track.lastY = event.clientY;
-      cursorDot.style.transform = `translate3d(${event.offsetX}px, ${event.offsetY}px, 0)`;
+      positionCursorDot(event);
     });
 
     function endTrackPointer(event) {
@@ -1143,11 +1176,12 @@
     scrollZone.addEventListener('pointercancel', releaseScroll);
 
     let lastVolumeSent = 0.5;
+    let lastVolumeX = 0;
+    let pendingVolumeDelta = 0;
 
     function renderVolume(value) {
       const percent = Math.round(value * 100);
       volumeValue.textContent = `${percent}%`;
-      volumeSlider.style.setProperty('--volume-level', `${percent}%`);
       volumeSlider.setAttribute('aria-valuenow', String(percent));
     }
 
@@ -1162,10 +1196,15 @@
       lastVolumeSent = clamped;
     }
 
-    function setVolumeFromPoint(event) {
-      const rect = volumeSlider.getBoundingClientRect();
-      if (rect.width <= 0) return;
-      setVolumeValue((event.clientX - rect.left) / rect.width);
+    function adjustVolumeFromDrag(event) {
+      const dx = event.clientX - lastVolumeX;
+      lastVolumeX = event.clientX;
+      pendingVolumeDelta += dx * VOLUME_DRAG_SENSITIVITY;
+
+      if (Math.abs(pendingVolumeDelta) >= VOLUME_DRAG_THRESHOLD) {
+        setVolumeValue(lastVolumeSent + pendingVolumeDelta);
+        pendingVolumeDelta = 0;
+      }
     }
 
     let volumePointerId = null;
@@ -1173,21 +1212,26 @@
     volumeZone.addEventListener('pointerdown', (event) => {
       event.preventDefault();
       volumePointerId = event.pointerId;
+      lastVolumeX = event.clientX;
+      pendingVolumeDelta = 0;
       volumeZone.setPointerCapture(event.pointerId);
       activate(volumeZone, true);
-      setVolumeFromPoint(event);
     });
 
     volumeZone.addEventListener('pointermove', (event) => {
       if (event.pointerId !== volumePointerId) return;
       event.preventDefault();
-      setVolumeFromPoint(event);
+      adjustVolumeFromDrag(event);
     });
 
     function releaseVolume(event) {
       if (event.pointerId !== volumePointerId) return;
       event.preventDefault();
+      if (Math.abs(pendingVolumeDelta) > 0) {
+        setVolumeValue(lastVolumeSent + pendingVolumeDelta);
+      }
       volumePointerId = null;
+      pendingVolumeDelta = 0;
       activate(volumeZone, false);
     }
 
