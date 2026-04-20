@@ -798,6 +798,8 @@
     let isConnected = false;
     let keyboardOpen = false;
     let ctrlArmed = false;
+    let hostPlatform = 'unknown';
+    let inputWarning = '';
 
     function syncViewportHeight() {
       const height = window.visualViewport?.height || window.innerHeight;
@@ -807,6 +809,15 @@
     function setStatus(state, label) {
       statusEl.dataset.state = state;
       statusText.textContent = label;
+    }
+
+    function getShortcutModifierToken() {
+      return hostPlatform === 'darwin' ? 'command' : 'ctrl';
+    }
+
+    function syncModifierButton() {
+      ctrlBtn.textContent = hostPlatform === 'darwin' ? 'Cmd' : 'Ctrl';
+      ctrlBtn.dataset.modifier = getShortcutModifierToken();
     }
 
     function connect() {
@@ -837,8 +848,20 @@
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'hello' && !data.nativeInputReady) {
-            setStatus('connected', 'Test mode');
+          if (data.type === 'hello') {
+            if (typeof data.hostPlatform === 'string') {
+              hostPlatform = data.hostPlatform;
+              syncModifierButton();
+            }
+
+            inputWarning = typeof data.inputWarning === 'string' ? data.inputWarning : '';
+            if (inputWarning) {
+              setStatus('connected', hostPlatform === 'darwin' ? 'Mac Access' : 'Limited');
+            } else if (!data.nativeInputReady) {
+              setStatus('connected', 'Test mode');
+            } else {
+              setStatus('connected', 'Connected');
+            }
           }
         } catch (_error) {
           // Ignore non-control server messages.
@@ -897,7 +920,7 @@
       const key = text.toLowerCase();
       if (!['z', 'c', 'v'].includes(key)) return false;
 
-      send({ type: 'keytap', key, modifiers: ['ctrl'] });
+      send({ type: 'keytap', key, modifiers: [getShortcutModifierToken()] });
       setCtrlArmed(false);
       return true;
     }
@@ -1252,6 +1275,7 @@
     window.addEventListener('resize', () => renderVolume(lastVolumeSent));
     window.visualViewport?.addEventListener('resize', () => renderVolume(lastVolumeSent));
     renderVolume(lastVolumeSent);
+    syncModifierButton();
 
     let lastMuteToggleAt = 0;
 

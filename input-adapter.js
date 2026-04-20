@@ -26,33 +26,93 @@ function getNativeInputExePath() {
   );
 }
 
-function createWindowsSendInputAdapter() {
-  const helperPath = getNativeInputExePath();
+function getNativeInputMacPath() {
+  return path.join(__dirname, 'native', 'mac-input', 'bin', 'Linka.NativeInput');
+}
 
-  if (process.platform !== 'win32' || !fs.existsSync(helperPath)) {
+function createNativeHelperAdapter({
+  name,
+  helperPath,
+  windowsHide = false,
+  initialReady = true,
+  initialWarning = '',
+  initialStatusExpected = false,
+}) {
+  if (!fs.existsSync(helperPath)) {
     return null;
   }
 
   const helper = spawn(helperPath, {
-    stdio: ['pipe', 'ignore', 'pipe'],
-    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide,
   });
 
   let alive = true;
+  let ready = initialReady;
+  let warning = initialWarning;
+  let stdoutBuffer = '';
+  let resolveInitialStatus = null;
+  const initialStatusPromise = initialStatusExpected
+    ? new Promise((resolve) => {
+      resolveInitialStatus = resolve;
+    })
+    : Promise.resolve();
+
+  function settleInitialStatus() {
+    if (resolveInitialStatus) {
+      resolveInitialStatus();
+      resolveInitialStatus = null;
+    }
+  }
 
   helper.once('exit', (code, signal) => {
     alive = false;
-    console.warn(`[input] win-sendinput helper exited code=${code} signal=${signal}`);
+    ready = false;
+    if (!warning) {
+      warning = `${name} helper exited unexpectedly.`;
+    }
+    settleInitialStatus();
+    console.warn(`[input] ${name} helper exited code=${code} signal=${signal}`);
   });
 
   helper.once('error', (error) => {
     alive = false;
-    console.warn(`[input] win-sendinput helper failed: ${error.message}`);
+    ready = false;
+    warning = `${name} helper failed: ${error.message}`;
+    settleInitialStatus();
+    console.warn(`[input] ${name} helper failed: ${error.message}`);
+  });
+
+  helper.stdout.on('data', (chunk) => {
+    stdoutBuffer += chunk.toString();
+
+    while (stdoutBuffer.includes('\n')) {
+      const newlineIndex = stdoutBuffer.indexOf('\n');
+      const line = stdoutBuffer.slice(0, newlineIndex).trim();
+      stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+      if (!line) continue;
+
+      try {
+        const message = JSON.parse(line);
+        if (message.type === 'status') {
+          if (typeof message.nativeInputReady === 'boolean') {
+            ready = message.nativeInputReady;
+          }
+          warning = typeof message.inputWarning === 'string' ? message.inputWarning : '';
+          settleInitialStatus();
+          continue;
+        }
+      } catch (_error) {
+        // Fall through to logging below.
+      }
+
+      console.warn(`[input:${name}] ${line}`);
+    }
   });
 
   helper.stderr.on('data', (chunk) => {
     const text = chunk.toString().trim();
-    if (text) console.warn(`[input:win-sendinput] ${text}`);
+    if (text) console.warn(`[input:${name}] ${text}`);
   });
 
   function send(command) {
@@ -70,8 +130,24 @@ function createWindowsSendInputAdapter() {
   });
 
   return {
-    name: 'win-sendinput',
-    ready: true,
+    name,
+    get ready() {
+      return ready;
+    },
+    get warning() {
+      return warning;
+    },
+    async waitForInitialStatus(timeoutMs = 500) {
+      if (!initialStatusExpected) {
+        return;
+      }
+
+      await Promise.race([
+        initialStatusPromise,
+        new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+      ]);
+      settleInitialStatus();
+    },
     move(dx, dy) {
       send({ type: 'move', dx: clampNumber(dx, -500, 500), dy: clampNumber(dy, -500, 500) });
     },
@@ -117,6 +193,33 @@ function createWindowsSendInputAdapter() {
   };
 }
 
+function createWindowsSendInputAdapter() {
+  if (process.platform !== 'win32') {
+    return null;
+  }
+
+  return createNativeHelperAdapter({
+    name: 'win-sendinput',
+    helperPath: getNativeInputExePath(),
+    windowsHide: true,
+    initialReady: true,
+  });
+}
+
+function createMacNativeInputAdapter() {
+  if (process.platform !== 'darwin') {
+    return null;
+  }
+
+  return createNativeHelperAdapter({
+    name: 'mac-native',
+    helperPath: getNativeInputMacPath(),
+    initialReady: false,
+    initialWarning: 'Waiting for macOS input helper status.',
+    initialStatusExpected: true,
+  });
+}
+
 async function createRobotAdapter() {
   try {
     const robotModule = await import('robotjs');
@@ -129,6 +232,7 @@ async function createRobotAdapter() {
     return {
       name: 'robotjs',
       ready: true,
+      warning: '',
       move(dx, dy) {
         const mouse = robot.getMousePos();
         robot.moveMouse(Math.round(mouse.x + dx), Math.round(mouse.y + dy));
@@ -182,6 +286,7 @@ function createLogOnlyAdapter() {
   return {
     name: 'log-only',
     ready: false,
+    warning: 'No native input backend is available. Commands are being logged only.',
     move(dx, dy) {
       console.log(`[input:log] move dx=${dx} dy=${dy}`);
     },
@@ -223,6 +328,11 @@ export async function createInputAdapter() {
   const winSendInput = createWindowsSendInputAdapter();
   if (winSendInput) {
     return winSendInput;
+  }
+
+  const macNative = createMacNativeInputAdapter();
+  if (macNative) {
+    return macNative;
   }
 
   const robot = await createRobotAdapter();

@@ -13,7 +13,9 @@ let statusWindow = null;
 let serverInfo = null;
 
 const gotTheLock = app.requestSingleInstanceLock();
-const iconPath = path.join(__dirname, 'build', 'icon.ico');
+const iconPath = process.platform === 'win32'
+  ? path.join(__dirname, 'build', 'icon.ico')
+  : path.join(__dirname, 'linkalogo.png');
 const APP_NAME = 'Linka';
 const APP_ID = 'com.linka.desktop';
 const START_HIDDEN_ARG = '--hidden';
@@ -63,6 +65,7 @@ function buildConnectionHtml() {
   const nativeState = serverInfo?.nativeInputReady
     ? 'Ready'
     : 'Input not ready';
+  const inputWarning = serverInfo?.inputWarning || '';
 
   return `<!doctype html>
   <html>
@@ -113,6 +116,12 @@ function buildConnectionHtml() {
           letter-spacing: 0.08em;
           text-transform: uppercase;
         }
+        .warning {
+          margin-top: 10px;
+          color: #ffcf87;
+          font-size: 13px;
+          line-height: 1.4;
+        }
       </style>
     </head>
     <body>
@@ -121,6 +130,7 @@ function buildConnectionHtml() {
         <img src="${escapeHtml(qrUrl)}" alt="QR code for ${escapeHtml(primaryUrl)}">
         <p>Scan with your phone camera.</p>
         <div class="status">${nativeState}</div>
+        ${inputWarning ? `<p class="warning">${escapeHtml(inputWarning)}</p>` : ''}
       </main>
     </body>
   </html>`;
@@ -205,10 +215,14 @@ function rebuildTray() {
   const nativeLabel = serverInfo?.nativeInputReady
     ? `Input: ${serverInfo.inputBackend}`
     : `Input: ${serverInfo?.inputBackend || 'not ready'}`;
+  const warningLabel = serverInfo?.inputWarning
+    ? `Warning: ${serverInfo.inputWarning}`
+    : null;
 
   const contextMenu = Menu.buildFromTemplate([
     { label: `${APP_NAME} Status: Running`, enabled: false },
     { label: nativeLabel, enabled: false },
+    ...(warningLabel ? [{ label: warningLabel, enabled: false }] : []),
     { label: `Phone URL: ${primaryUrl}`, enabled: false },
     { type: 'separator' },
     { label: 'Show Connection Info', click: showConnectionWindow },

@@ -1,7 +1,7 @@
 {
   "name": "linka",
   "version": "0.0.0",
-  "description": "A local phone trackpad, keyboard, and volume controller for Windows.",
+  "description": "A local phone trackpad, keyboard, and volume controller for Windows and macOS.",
   "license": "MIT",
   "type": "module",
   "main": "main.js",
@@ -12,12 +12,15 @@
     "start": "node server.js",
     "lint": "tsc --noEmit",
     "build:native:win": "dotnet publish native/win-input/Linka.NativeInput.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true",
+    "build:native:mac": "mkdir -p native/mac-input/bin && swiftc native/mac-input/main.swift -o native/mac-input/bin/Linka.NativeInput",
     "rebuild:native": "electron-rebuild -f -w robotjs",
     "apply:win-icon": "node scripts/apply-windows-icon.cjs",
     "build:win": "npm run build:win:installer",
     "build:win:installer": "npm run build:native:win && npm run build && electron-builder --win nsis",
     "build:win:unpacked": "npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon",
-    "build:win:portable": "npm run build:native:win && npm run build && electron-builder --win portable && npm run apply:win-icon"
+    "build:win:portable": "npm run build:native:win && npm run build && electron-builder --win portable && npm run apply:win-icon",
+    "build:mac": "npm run build:mac:dir",
+    "build:mac:dir": "npm run build:native:mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -48,6 +51,7 @@
       "server.js",
       "input-adapter.js",
       "native/win-input/bin/Release/net8.0/win-x64/publish/**/*",
+      "native/mac-input/bin/**/*",
       "index.html",
       "package.json",
       "node_modules/**/*"
