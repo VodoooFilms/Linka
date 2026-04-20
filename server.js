@@ -168,6 +168,7 @@ export async function startServer(options = {}) {
   const server = createHttpServer(app);
   const wss = new WebSocketServer({ server });
   const input = await createInputAdapter();
+  await input.waitForInitialStatus?.();
   const clients = new Set();
   const connectionInfo = getConnectionInfo(port);
 
@@ -179,6 +180,7 @@ export async function startServer(options = {}) {
     res.json({
       product: 'LINKA',
       status: 'running',
+      hostPlatform: process.platform,
       port,
       bindHost: connectionInfo.bindHost,
       primaryUrl: connectionInfo.primaryUrl,
@@ -187,6 +189,7 @@ export async function startServer(options = {}) {
       candidates: connectionInfo.candidates,
       inputBackend: input.name,
       nativeInputReady: input.ready,
+      inputWarning: input.warning || undefined,
       clients: clients.size,
     });
   });
@@ -229,7 +232,13 @@ export async function startServer(options = {}) {
       clients: clients.size,
       remoteAddress: req.socket.remoteAddress || 'unknown',
     });
-    ws.send(JSON.stringify({ type: 'hello', inputBackend: input.name, nativeInputReady: input.ready }));
+    ws.send(JSON.stringify({
+      type: 'hello',
+      hostPlatform: process.platform,
+      inputBackend: input.name,
+      nativeInputReady: input.ready,
+      inputWarning: input.warning || undefined,
+    }));
 
     ws.on('message', (message) => {
       try {
@@ -255,6 +264,9 @@ export async function startServer(options = {}) {
   console.log(`[net] Localhost URL: ${connectionInfo.localhostUrl}`);
   console.log(`[net] Candidates: ${connectionInfo.candidates.map((candidate) => `${candidate.url} (${candidate.name}, score=${candidate.score}${candidate.likelyVirtual ? ', virtual/link-local' : ''})`).join(' | ') || 'none'}`);
   console.log(`Input backend: ${input.name}${input.ready ? '' : ' (not controlling native input)'}`);
+  if (input.warning) {
+    console.warn(`[input] ${input.warning}`);
+  }
 
   return {
     port,
@@ -265,6 +277,7 @@ export async function startServer(options = {}) {
     candidates: connectionInfo.candidates,
     inputBackend: input.name,
     nativeInputReady: input.ready,
+    inputWarning: input.warning || undefined,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
       input.close?.();
