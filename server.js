@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer as createHttpServer } from 'http';
 import { WebSocketServer } from 'ws';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -11,7 +12,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_PORT = Number(process.env.LINKA_PORT || 3000);
 const BIND_HOST = '0.0.0.0';
+const MAX_BRIDGE_MESSAGES = 30;
 let loggingReady = false;
+let bridgeMessages = [];
 
 function setupFileLogging() {
   if (loggingReady || !process.env.LINKA_LOG_FILE) return;
@@ -158,11 +161,32 @@ function handleCommand(input, data) {
   }
 }
 
+function normalizeBridgeMessage(message) {
+  if (!message || typeof message !== 'object') return null;
+
+  const type = message.type === 'image' ? 'image' : message.type === 'text' ? 'text' : null;
+  const from = message.from === 'pc' ? 'pc' : message.from === 'phone' ? 'phone' : null;
+  const content = typeof message.content === 'string' ? message.content : '';
+
+  if (!type || !from || !content) return null;
+
+  return {
+    id: typeof message.id === 'string' && message.id ? message.id : randomUUID(),
+    type,
+    content,
+    from,
+    timestamp: Number.isFinite(Number(message.timestamp)) ? Number(message.timestamp) : Date.now(),
+  };
+}
+
 export async function startServer(options = {}) {
   setupFileLogging();
   const port = Number(options.port || DEFAULT_PORT);
   const onClientConnected = typeof options.onClientConnected === 'function'
     ? options.onClientConnected
+    : null;
+  const captureScreen = typeof options.captureScreen === 'function'
+    ? options.captureScreen
     : null;
   const app = express();
   const server = createHttpServer(app);
@@ -170,6 +194,97 @@ export async function startServer(options = {}) {
   const input = await createInputAdapter();
   const clients = new Set();
   const connectionInfo = getConnectionInfo(port);
+
+  function sendJson(ws, data) {
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify(data));
+    }
+  }
+
+  function broadcast(data) {
+    for (const client of clients) {
+      sendJson(client, data);
+    }
+  }
+
+  function syncBridge(ws) {
+    sendJson(ws, {
+      event: 'bridge_sync',
+      payload: {
+        messages: bridgeMessages,
+      },
+    });
+  }
+
+  function appendBridgeMessage(message) {
+    bridgeMessages.push(message);
+    if (bridgeMessages.length > MAX_BRIDGE_MESSAGES) {
+      bridgeMessages = bridgeMessages.slice(-MAX_BRIDGE_MESSAGES);
+    }
+  }
+
+  async function handleBridgeEvent(ws, data) {
+    if (data.event === 'bridge_sync_request') {
+      syncBridge(ws);
+      return true;
+    }
+
+    if (data.event === 'bridge_clear') {
+      bridgeMessages = [];
+      broadcast({ event: 'bridge_clear' });
+      return true;
+    }
+
+    if (data.event === 'bridge_capture_request') {
+      if (!captureScreen) {
+        sendJson(ws, {
+          event: 'bridge_capture_error',
+          payload: { message: 'Screen capture is only available in the desktop app.' },
+        });
+        return true;
+      }
+
+      try {
+        const content = await captureScreen();
+        const message = normalizeBridgeMessage({
+          id: randomUUID(),
+          type: 'image',
+          content,
+          from: 'pc',
+          timestamp: Date.now(),
+        });
+
+        if (!message) {
+          throw new Error('Captured image was empty.');
+        }
+
+        appendBridgeMessage(message);
+        broadcast({ event: 'bridge_message', payload: message });
+        sendJson(ws, { event: 'bridge_capture_complete' });
+      } catch (error) {
+        console.error('[bridge] Screen capture failed:', error);
+        sendJson(ws, {
+          event: 'bridge_capture_error',
+          payload: { message: `Screen capture failed: ${error?.message || error}` },
+        });
+      }
+      return true;
+    }
+
+    if (data.event === 'bridge_message') {
+      const message = normalizeBridgeMessage(data.payload);
+      if (!message) {
+        console.warn('[ws] Invalid bridge message ignored.');
+        return true;
+      }
+
+      appendBridgeMessage(message);
+      broadcast({ event: 'bridge_message', payload: message });
+      return true;
+    }
+
+    return false;
+  }
 
   app.disable('x-powered-by');
   app.use(logRequest);
@@ -229,11 +344,14 @@ export async function startServer(options = {}) {
       clients: clients.size,
       remoteAddress: req.socket.remoteAddress || 'unknown',
     });
-    ws.send(JSON.stringify({ type: 'hello', inputBackend: input.name, nativeInputReady: input.ready }));
+    sendJson(ws, { type: 'hello', inputBackend: input.name, nativeInputReady: input.ready });
 
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
       try {
-        handleCommand(input, JSON.parse(message.toString()));
+        const data = JSON.parse(message.toString());
+        if (!(await handleBridgeEvent(ws, data))) {
+          handleCommand(input, data);
+        }
       } catch (error) {
         console.error('[ws] Error processing message:', error);
       }

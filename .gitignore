@@ -16,6 +16,8 @@ native/**/obj/
 build/*
 !build/icon.ico
 !build/installer.nsh
+!build/linka-icon.ico
+!build/linka-logo.png
 
 # Logs
 *.log

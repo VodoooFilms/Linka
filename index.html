@@ -272,6 +272,225 @@
       padding: 8px;
     }
 
+    .app.bridge-open {
+      grid-template-rows: 52px minmax(0, 1fr);
+    }
+
+    .app.bridge-open .controller,
+    .app.bridge-open .keyboard-tools {
+      display: none;
+    }
+
+    .bridge-panel {
+      grid-row: 2;
+      min-height: 0;
+      display: none;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 10px;
+      background: rgba(8, 10, 12, 0.66);
+      touch-action: auto;
+    }
+
+    .app.bridge-open .bridge-panel {
+      display: grid;
+    }
+
+    .bridge-header {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .bridge-title {
+      min-width: 0;
+    }
+
+    .bridge-title strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.1;
+    }
+
+    .bridge-title span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .bridge-back,
+    .bridge-capture,
+    .bridge-clear,
+    .bridge-send,
+    .bridge-upload,
+    .bridge-action {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      touch-action: manipulation;
+    }
+
+    .bridge-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bridge-back,
+    .bridge-capture,
+    .bridge-clear {
+      padding: 0 12px;
+    }
+
+    .bridge-capture {
+      border-color: rgba(117, 167, 255, 0.34);
+      color: #9fc0ff;
+    }
+
+    .bridge-capture:disabled {
+      opacity: 0.55;
+    }
+
+    .bridge-send {
+      min-width: 74px;
+      border-color: rgba(0, 217, 139, 0.36);
+      background: rgba(0, 217, 139, 0.15);
+      color: var(--accent);
+    }
+
+    .bridge-feed {
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding-right: 2px;
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .bridge-empty {
+      margin: auto;
+      max-width: 260px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .bridge-item {
+      width: min(100%, 720px);
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+
+    .bridge-item.from-phone {
+      border-color: rgba(0, 217, 139, 0.18);
+    }
+
+    .bridge-item.from-pc {
+      border-color: rgba(117, 167, 255, 0.2);
+    }
+
+    .bridge-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .bridge-text {
+      margin: 0 0 10px;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.42;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      user-select: text;
+      touch-action: auto;
+    }
+
+    .bridge-image {
+      display: block;
+      width: 100%;
+      max-height: 48vh;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      object-fit: contain;
+      background: rgba(0, 0, 0, 0.28);
+      touch-action: auto;
+    }
+
+    .bridge-action {
+      padding: 0 12px;
+      color: var(--muted);
+    }
+
+    .bridge-feed,
+    .bridge-feed * {
+      touch-action: pan-y;
+    }
+
+    .bridge-feed button {
+      touch-action: manipulation;
+    }
+
+    .bridge-composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+    }
+
+    .bridge-input {
+      min-width: 0;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 11px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+      font-size: 15px;
+      user-select: text;
+      touch-action: auto;
+    }
+
+    .bridge-input::placeholder {
+      color: rgba(127, 145, 139, 0.75);
+    }
+
+    .bridge-upload {
+      grid-column: 1 / -1;
+      color: var(--muted);
+    }
+
+    .bridge-file {
+      display: none;
+    }
+
     .app.keyboard-open .controller {
       grid-row: 3;
     }
@@ -684,7 +903,7 @@
       <div class="primary-controls" aria-label="Primary controls">
         <button id="keyboardBtn" class="keyboard-button top-button" type="button">Keyboard</button>
         <button id="muteBtn" class="mute-button top-button" type="button">Mute</button>
-        <button class="key-button top-button" type="button" data-key="enter">Enter</button>
+        <button id="bridgeBtn" class="key-button top-button" type="button">Bridge</button>
       </div>
       <button id="fullscreenBtn" class="fullscreen-button" type="button" aria-label="Toggle full screen" title="Full screen">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -737,6 +956,31 @@
         </svg>
       </div>
     </section>
+
+    <section id="bridgePanel" class="bridge-panel" aria-label="Bridge transfer panel" aria-hidden="true">
+      <header class="bridge-header">
+        <button id="bridgeBackBtn" class="bridge-back" type="button">Back</button>
+        <div class="bridge-title">
+          <strong>Bridge</strong>
+          <span>Phone &harr; PC</span>
+        </div>
+        <div class="bridge-header-actions">
+          <button id="bridgeCaptureBtn" class="bridge-capture" type="button">Capture</button>
+          <button id="bridgeClearBtn" class="bridge-clear" type="button">Clear</button>
+        </div>
+      </header>
+
+      <div id="bridgeFeed" class="bridge-feed" aria-live="polite">
+        <p class="bridge-empty">No bridge items yet. Send text or an image to share it across this local session.</p>
+      </div>
+
+      <form id="bridgeForm" class="bridge-composer" autocomplete="off">
+        <input id="bridgeInput" class="bridge-input" type="text" placeholder="Send text locally" aria-label="Bridge text" autocomplete="off">
+        <button class="bridge-send" type="submit">Send</button>
+        <button id="bridgeUploadBtn" class="bridge-upload" type="button">Upload Image</button>
+        <input id="bridgeFileInput" class="bridge-file" type="file" accept="image/*" aria-label="Upload bridge image">
+      </form>
+    </section>
   </main>
   <noscript><div class="fatal-error visible">JavaScript is disabled. LINKA needs JavaScript to run.</div></noscript>
   <div id="fatalError" class="fatal-error" role="alert"></div>
@@ -771,6 +1015,16 @@
     const keyboardTools = document.getElementById('keyboardTools');
     const keyboardInput = document.getElementById('keyboardInput');
     const ctrlBtn = document.getElementById('ctrlBtn');
+    const bridgeBtn = document.getElementById('bridgeBtn');
+    const bridgePanel = document.getElementById('bridgePanel');
+    const bridgeBackBtn = document.getElementById('bridgeBackBtn');
+    const bridgeCaptureBtn = document.getElementById('bridgeCaptureBtn');
+    const bridgeClearBtn = document.getElementById('bridgeClearBtn');
+    const bridgeFeed = document.getElementById('bridgeFeed');
+    const bridgeForm = document.getElementById('bridgeForm');
+    const bridgeInput = document.getElementById('bridgeInput');
+    const bridgeUploadBtn = document.getElementById('bridgeUploadBtn');
+    const bridgeFileInput = document.getElementById('bridgeFileInput');
     const dragZone = document.getElementById('dragZone');
     const trackpadZone = document.getElementById('trackpadZone');
     const volumeZone = document.getElementById('volumeZone');
@@ -798,6 +1052,11 @@
     let isConnected = false;
     let keyboardOpen = false;
     let ctrlArmed = false;
+    let bridgeOpen = false;
+    let bridgeCapturing = false;
+    let bridgeMessages = [];
+
+    const bridgeSource = window.matchMedia?.('(pointer: coarse)').matches ? 'phone' : 'pc';
 
     function syncViewportHeight() {
       const height = window.visualViewport?.height || window.innerHeight;
@@ -821,6 +1080,9 @@
         reconnectDelay = 650;
         clearClientError();
         setStatus('connected', 'Connected');
+        if (bridgeOpen) {
+          requestBridgeSync();
+        }
       };
 
       socket.onclose = () => {
@@ -839,6 +1101,8 @@
           const data = JSON.parse(event.data);
           if (data.type === 'hello' && !data.nativeInputReady) {
             setStatus('connected', 'Test mode');
+          } else if (data.event) {
+            handleBridgeSocketMessage(data);
           }
         } catch (_error) {
           // Ignore non-control server messages.
@@ -849,7 +1113,189 @@
     function send(data) {
       if (isConnected && socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify(data));
+        return true;
       }
+      return false;
+    }
+
+    function createBridgeId() {
+      return window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function formatBridgeSource(source) {
+      return source === 'pc' ? 'PC' : 'Phone';
+    }
+
+    function formatBridgeTime(timestamp) {
+      const date = new Date(Number(timestamp) || Date.now());
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function normalizeBridgeImageSource(content) {
+      if (content.startsWith('data:image/')) return content;
+      return `data:image/*;base64,${content}`;
+    }
+
+    function renderBridgeMessages() {
+      bridgeFeed.replaceChildren();
+
+      if (!bridgeMessages.length) {
+        const empty = document.createElement('p');
+        empty.className = 'bridge-empty';
+        empty.textContent = 'No bridge items yet. Send text or an image to share it across this local session.';
+        bridgeFeed.append(empty);
+        return;
+      }
+
+      for (const message of bridgeMessages) {
+        const item = document.createElement('article');
+        item.className = `bridge-item from-${message.from === 'pc' ? 'pc' : 'phone'}`;
+
+        const meta = document.createElement('div');
+        meta.className = 'bridge-meta';
+
+        const source = document.createElement('span');
+        source.textContent = `${formatBridgeSource(message.from)} / ${message.type}`;
+
+        const time = document.createElement('time');
+        time.dateTime = new Date(Number(message.timestamp) || Date.now()).toISOString();
+        time.textContent = formatBridgeTime(message.timestamp);
+
+        meta.append(source, time);
+        item.append(meta);
+
+        if (message.type === 'image') {
+          const image = document.createElement('img');
+          image.className = 'bridge-image';
+          image.src = normalizeBridgeImageSource(message.content);
+          image.alt = `Image from ${formatBridgeSource(message.from)}`;
+          item.append(image);
+
+          const download = document.createElement('button');
+          download.className = 'bridge-action';
+          download.type = 'button';
+          download.textContent = 'Download';
+          download.addEventListener('click', () => downloadBridgeImage(message));
+          item.append(download);
+        } else {
+          const text = document.createElement('p');
+          text.className = 'bridge-text';
+          text.textContent = message.content;
+          item.append(text);
+
+          const copy = document.createElement('button');
+          copy.className = 'bridge-action';
+          copy.type = 'button';
+          copy.textContent = 'Copy';
+          copy.addEventListener('click', () => copyBridgeText(message.content, copy));
+          item.append(copy);
+        }
+
+        bridgeFeed.append(item);
+      }
+
+      bridgeFeed.scrollTop = bridgeFeed.scrollHeight;
+    }
+
+    async function copyBridgeText(text, button) {
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = 'Copied';
+        window.setTimeout(() => {
+          button.textContent = 'Copy';
+        }, 1200);
+      } catch (error) {
+        showClientError(`Copy failed: ${error?.message || error}`);
+      }
+    }
+
+    function downloadBridgeImage(message) {
+      const link = document.createElement('a');
+      link.href = normalizeBridgeImageSource(message.content);
+      link.download = `linka-bridge-${message.id || Date.now()}.png`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }
+
+    function upsertBridgeMessage(message) {
+      if (!message || !message.id) return;
+      const existingIndex = bridgeMessages.findIndex((item) => item.id === message.id);
+      if (existingIndex >= 0) {
+        bridgeMessages.splice(existingIndex, 1, message);
+      } else {
+        bridgeMessages.push(message);
+      }
+      bridgeMessages = bridgeMessages.slice(-30);
+      renderBridgeMessages();
+    }
+
+    function handleBridgeSocketMessage(data) {
+      if (data.event === 'bridge_sync') {
+        bridgeMessages = Array.isArray(data.payload?.messages) ? data.payload.messages.slice(-30) : [];
+        renderBridgeMessages();
+      } else if (data.event === 'bridge_message') {
+        upsertBridgeMessage(data.payload);
+      } else if (data.event === 'bridge_clear') {
+        bridgeMessages = [];
+        renderBridgeMessages();
+      } else if (data.event === 'bridge_capture_complete') {
+        setBridgeCapturing(false);
+      } else if (data.event === 'bridge_capture_error') {
+        setBridgeCapturing(false);
+        showClientError(data.payload?.message || 'Screen capture failed.');
+      }
+    }
+
+    function requestBridgeSync() {
+      send({ event: 'bridge_sync_request' });
+    }
+
+    function sendBridgeMessage(type, content) {
+      const trimmedContent = type === 'text' ? content.trim() : content;
+      if (!trimmedContent) return;
+
+      const sent = send({
+        event: 'bridge_message',
+        payload: {
+          id: createBridgeId(),
+          type,
+          content: trimmedContent,
+          from: bridgeSource,
+          timestamp: Date.now(),
+        },
+      });
+
+      if (!sent) {
+        showClientError('Bridge is offline. Reconnect before sending.');
+      }
+
+      return sent;
+    }
+
+    function setBridgeCapturing(active) {
+      bridgeCapturing = Boolean(active);
+      bridgeCaptureBtn.disabled = bridgeCapturing;
+      bridgeCaptureBtn.textContent = bridgeCapturing ? 'Capturing' : 'Capture';
+    }
+
+    function setBridgeOpen(open) {
+      bridgeOpen = Boolean(open);
+      if (bridgeOpen) {
+        setKeyboardOpen(false);
+      }
+
+      appEl.classList.toggle('bridge-open', bridgeOpen);
+      bridgePanel.setAttribute('aria-hidden', bridgeOpen ? 'false' : 'true');
+      bridgeBtn.setAttribute('aria-pressed', bridgeOpen ? 'true' : 'false');
+
+      if (bridgeOpen) {
+        requestBridgeSync();
+      } else {
+        bridgeInput.blur();
+      }
+
+      syncViewportHeight();
     }
 
     function activate(zone, active) {
@@ -905,6 +1351,63 @@
     keyboardBtn.addEventListener('click', (event) => {
       event.preventDefault();
       setKeyboardOpen(!keyboardOpen);
+    });
+
+    bridgeBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      setBridgeOpen(true);
+    });
+
+    bridgeBackBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      setBridgeOpen(false);
+    });
+
+    bridgeClearBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      send({ event: 'bridge_clear' });
+    });
+
+    bridgeCaptureBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (bridgeCapturing) return;
+
+      clearClientError();
+      setBridgeCapturing(true);
+      if (!send({ event: 'bridge_capture_request' })) {
+        setBridgeCapturing(false);
+        showClientError('Bridge is offline. Reconnect before capturing.');
+      }
+    });
+
+    bridgeForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (sendBridgeMessage('text', bridgeInput.value)) {
+        bridgeInput.value = '';
+      }
+      bridgeInput.focus({ preventScroll: true });
+    });
+
+    bridgeUploadBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      bridgeFileInput.click();
+    });
+
+    bridgeFileInput.addEventListener('change', () => {
+      const file = bridgeFileInput.files?.[0];
+      bridgeFileInput.value = '';
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.addEventListener('load', () => {
+        if (typeof reader.result === 'string') {
+          sendBridgeMessage('image', reader.result);
+        }
+      });
+      reader.addEventListener('error', () => {
+        showClientError('Image upload failed.');
+      });
+      reader.readAsDataURL(file);
     });
 
     function updateFullscreenButton() {

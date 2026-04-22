@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, clipboard, ipcMain, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, clipboard, desktopCapturer, ipcMain, nativeImage, screen, shell } from 'electron';
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -13,7 +13,7 @@ let statusWindow = null;
 let serverInfo = null;
 
 const gotTheLock = app.requestSingleInstanceLock();
-const iconPath = path.join(__dirname, 'build', 'icon.ico');
+const iconPath = path.join(__dirname, 'build', 'linka-icon.ico');
 const APP_NAME = 'Linka';
 const APP_ID = 'com.linka.desktop';
 const START_HIDDEN_ARG = '--hidden';
@@ -158,6 +158,88 @@ function closeConnectionWindow() {
   }
 }
 
+function captureAllScreensWithPowerShell() {
+  const script = `
+Add-Type @"
+using System.Runtime.InteropServices;
+public static class DpiAwareness {
+  [DllImport("user32.dll")]
+  public static extern bool SetProcessDPIAware();
+}
+"@
+[void][DpiAwareness]::SetProcessDPIAware()
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$stream = New-Object System.IO.MemoryStream
+try {
+  $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+  $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+  [Convert]::ToBase64String($stream.ToArray())
+} finally {
+  $stream.Dispose()
+  $graphics.Dispose()
+  $bitmap.Dispose()
+}
+`;
+
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    script,
+  ], {
+    encoding: 'utf8',
+    maxBuffer: 60 * 1024 * 1024,
+    windowsHide: true,
+  });
+
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.trim() || 'PowerShell screen capture failed.');
+  }
+
+  const base64 = result.stdout.trim();
+  if (!base64) {
+    throw new Error('PowerShell screen capture returned an empty image.');
+  }
+
+  return `data:image/png;base64,${base64}`;
+}
+
+async function capturePrimaryScreenWithElectron() {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width, height } = primaryDisplay.size;
+  const scaleFactor = primaryDisplay.scaleFactor || 1;
+  const thumbnailSize = {
+    width: Math.round(width * scaleFactor),
+    height: Math.round(height * scaleFactor),
+  };
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize,
+  });
+  const source = sources.find((item) => item.display_id === String(primaryDisplay.id)) || sources[0];
+
+  if (!source || source.thumbnail.isEmpty()) {
+    throw new Error('No screen source was available.');
+  }
+
+  return `data:image/png;base64,${source.thumbnail.toPNG().toString('base64')}`;
+}
+
+async function captureAllScreens() {
+  if (process.platform === 'win32') {
+    return captureAllScreensWithPowerShell();
+  }
+
+  return capturePrimaryScreenWithElectron();
+}
+
 function shouldShowConnectionWindow() {
   return !process.argv.includes(START_HIDDEN_ARG);
 }
@@ -250,6 +332,7 @@ if (!gotTheLock) {
       fs.mkdirSync(logDir, { recursive: true });
       process.env.LINKA_LOG_FILE = path.join(logDir, 'linka.log');
       serverInfo = await startServer({
+        captureScreen: captureAllScreens,
         onClientConnected: () => {
           closeConnectionWindow();
         },

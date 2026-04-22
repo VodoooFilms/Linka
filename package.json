@@ -1,7 +1,7 @@
 {
   "name": "linka",
   "version": "0.0.0",
-  "description": "A local phone trackpad, keyboard, and volume controller for Windows.",
+  "description": "A local phone remote controller and temporary text/image transfer bridge for Windows.",
   "license": "MIT",
   "type": "module",
   "main": "main.js",
@@ -42,6 +42,8 @@
     },
     "files": [
       "build/icon.ico",
+      "build/linka-icon.ico",
+      "build/linka-logo.png",
       "dist/**/*",
       "main.js",
       "connection-preload.cjs",
@@ -54,7 +56,7 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico",
+      "icon": "build/linka-icon.ico",
       "signAndEditExecutable": false
     },
     "nsis": {
