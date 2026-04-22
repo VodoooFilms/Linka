@@ -11,6 +11,13 @@ Linka has two local modes:
 - Remote mode: phone-based trackpad, keyboard, scroll, mouse, volume, and mute controls.
 - Bridge mode: a temporary local space for sending text and images between phone and PC over the same WebSocket connection.
 
+## Screenshots
+
+<p>
+  <img src="docs/images/linka-phone-keyboard.jpg" alt="Linka phone keyboard controls" width="240">
+  <img src="docs/images/linka-landscape-controller.jpg" alt="Linka landscape controller layout" width="520">
+</p>
+
 ## Features
 
 - Phone-based trackpad with hold and right-click controls.
@@ -87,6 +94,7 @@ The installed app starts with Windows in the background, launches the local serv
 |-- input-adapter.js            # Native input adapter selection
 |-- native/win-input/           # .NET Windows input helper
 |-- scripts/                    # Build helper scripts
+|-- docs/images/                # README screenshots
 |-- build/linka-icon.ico        # Windows app icon
 |-- build/linka-logo.png        # Project logo asset
 `-- linkalogo.png               # Legacy project logo asset
