@@ -20,6 +20,11 @@ const START_HIDDEN_ARG = '--hidden';
 const AUTO_START_ENABLED = true;
 const STARTUP_REG_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const STARTUP_REG_NAME = APP_NAME;
+const DEFAULT_PRODUCTION_PORT = 3067;
+
+function getElectronPort() {
+  return Number(process.env.PORT || DEFAULT_PRODUCTION_PORT);
+}
 
 ipcMain.handle('copy-text', (_event, value) => {
   clipboard.writeText(String(value || ''));
@@ -32,7 +37,8 @@ ipcMain.handle('open-url', (_event, value) => {
 });
 
 function getPrimaryLanUrl() {
-  return serverInfo?.primaryUrl || serverInfo?.urls?.find((url) => !url.includes('localhost')) || serverInfo?.urls?.[0] || 'http://localhost:3000';
+  const PORT = getElectronPort();
+  return serverInfo?.primaryUrl || serverInfo?.urls?.find((url) => !url.includes('localhost')) || serverInfo?.urls?.[0] || `http://localhost:${PORT}`;
 }
 
 function escapeHtml(value) {
@@ -323,6 +329,7 @@ if (!gotTheLock) {
 
     if (app.isPackaged) {
       process.env.NODE_ENV = 'production';
+      process.env.PORT ||= String(DEFAULT_PRODUCTION_PORT);
     }
 
     configureAutoStart();

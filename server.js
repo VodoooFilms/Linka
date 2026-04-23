@@ -10,11 +10,18 @@ import { createInputAdapter } from './input-adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DEFAULT_PORT = Number(process.env.LINKA_PORT || 3000);
 const BIND_HOST = '0.0.0.0';
 const MAX_BRIDGE_MESSAGES = 30;
 let loggingReady = false;
 let bridgeMessages = [];
+
+function resolveDefaultPort() {
+  if (process.env.NODE_ENV === 'production') {
+    return Number(process.env.PORT || 3067);
+  }
+
+  return Number(process.env.LINKA_PORT || 3000);
+}
 
 function setupFileLogging() {
   if (loggingReady || !process.env.LINKA_LOG_FILE) return;
@@ -181,7 +188,8 @@ function normalizeBridgeMessage(message) {
 
 export async function startServer(options = {}) {
   setupFileLogging();
-  const port = Number(options.port || DEFAULT_PORT);
+  const PORT = Number(options.port || resolveDefaultPort());
+  const port = PORT;
   const onClientConnected = typeof options.onClientConnected === 'function'
     ? options.onClientConnected
     : null;
