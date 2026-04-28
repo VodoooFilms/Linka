@@ -1045,10 +1045,12 @@
     const PINCH_MAX_STEPS_PER_MOVE = 3;
     const TAP_MAX_MS = 220;
     const TAP_MOVE_TOLERANCE = 7;
+    const MAX_BRIDGE_IMAGE_BYTES = 5 * 1024 * 1024;
 
     let socket;
     let reconnectTimer = 0;
     let reconnectDelay = 650;
+    let reconnectAttempt = 0;
     let isConnected = false;
     let keyboardOpen = false;
     let ctrlArmed = false;
@@ -1070,7 +1072,11 @@
 
     function connect() {
       clearTimeout(reconnectTimer);
-      setStatus('connecting', 'Connecting');
+      reconnectAttempt++;
+      const statusLabel = reconnectAttempt > 1
+        ? `Reconnecting ${reconnectAttempt}`
+        : 'Connecting';
+      setStatus('connecting', statusLabel);
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       socket = new WebSocket(`${protocol}//${window.location.host}`);
@@ -1078,8 +1084,10 @@
       socket.onopen = () => {
         isConnected = true;
         reconnectDelay = 650;
+        reconnectAttempt = 0;
         clearClientError();
         setStatus('connected', 'Connected');
+        requestWakeLock();
         if (bridgeOpen) {
           requestBridgeSync();
         }
@@ -1087,7 +1095,8 @@
 
       socket.onclose = () => {
         isConnected = false;
-        setStatus('disconnected', 'Offline');
+        releaseWakeLock();
+        setStatus('disconnected', `Offline · Retry in ${Math.round(reconnectDelay / 1000)}s`);
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 1.6, 5000);
       };
@@ -1101,6 +1110,15 @@
           const data = JSON.parse(event.data);
           if (data.type === 'hello' && !data.nativeInputReady) {
             setStatus('connected', 'Test mode');
+          } else if (data.event === 'volume_state') {
+            if (data.payload && typeof data.payload.volume === 'number') {
+              lastVolumeSent = data.payload.volume;
+              renderVolume(lastVolumeSent);
+            }
+          } else if (data.event === 'system_state') {
+            if (data.payload && !data.payload.nativeInputReady) {
+              setStatus('connected', 'Input offline');
+            }
           } else if (data.event) {
             handleBridgeSocketMessage(data);
           }
@@ -1133,7 +1151,7 @@
 
     function normalizeBridgeImageSource(content) {
       if (content.startsWith('data:image/')) return content;
-      return `data:image/*;base64,${content}`;
+      return `data:image/png;base64,${content}`;
     }
 
     function renderBridgeMessages() {
@@ -1197,9 +1215,28 @@
       bridgeFeed.scrollTop = bridgeFeed.scrollHeight;
     }
 
+    function copyWithExecCommand(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '-9999px';
+      textarea.style.opacity = '0';
+      document.body.append(textarea);
+      textarea.select();
+      const success = document.execCommand('copy');
+      textarea.remove();
+      return success;
+    }
+
     async function copyBridgeText(text, button) {
       try {
-        await navigator.clipboard.writeText(text);
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ok = copyWithExecCommand(text);
+          if (!ok) throw new Error('Copy command failed.');
+        }
         button.textContent = 'Copied';
         window.setTimeout(() => {
           button.textContent = 'Copy';
@@ -1398,6 +1435,11 @@
       bridgeFileInput.value = '';
       if (!file) return;
 
+      if (file.size > MAX_BRIDGE_IMAGE_BYTES) {
+        showClientError(`Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.`);
+        return;
+      }
+
       const reader = new FileReader();
       reader.addEventListener('load', () => {
         if (typeof reader.result === 'string') {
@@ -1497,7 +1539,26 @@
       multiTouch: false,
       pinchDistance: 0,
       pinchActive: false,
+      moveFlushTimer: null,
+      pendingDx: 0,
+      pendingDy: 0,
     };
+
+    const MOVE_FLUSH_INTERVAL = 8;
+
+    function flushPendingMove() {
+      if (track.moveFlushTimer) {
+        clearTimeout(track.moveFlushTimer);
+        track.moveFlushTimer = null;
+      }
+
+      if (Math.abs(track.pendingDx) > 0.2 || Math.abs(track.pendingDy) > 0.2) {
+        send({ type: 'move', dx: track.pendingDx, dy: track.pendingDy });
+      }
+
+      track.pendingDx = 0;
+      track.pendingDy = 0;
+    }
 
     function getPinchDistance() {
       if (track.pointers.size < 2) return 0;
@@ -1600,8 +1661,11 @@
         track.moved = true;
       }
 
-      if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
-        send({ type: 'move', dx, dy });
+      track.pendingDx += dx;
+      track.pendingDy += dy;
+
+      if (!track.moveFlushTimer) {
+        track.moveFlushTimer = setTimeout(flushPendingMove, MOVE_FLUSH_INTERVAL);
       }
 
       track.lastX = event.clientX;
@@ -1615,6 +1679,7 @@
       track.pointers.delete(event.pointerId);
 
       if (track.pointers.size === 0) {
+        flushPendingMove();
         const duration = performance.now() - track.startTime;
         if (!track.moved && duration < TAP_MAX_MS) {
           send({ type: 'click', button: track.multiTouch ? 'right' : 'left' });
@@ -1807,6 +1872,37 @@
 
     window.addEventListener('gesturestart', (event) => {
       event.preventDefault();
+    });
+
+    let wakeLock = null;
+
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => {
+          wakeLock = null;
+        });
+      } catch (_error) {
+        // Wake Lock not available or denied.
+      }
+    }
+
+    async function releaseWakeLock() {
+      if (wakeLock) {
+        try {
+          await wakeLock.release();
+        } catch (_error) {
+          // ignore
+        }
+        wakeLock = null;
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && isConnected) {
+        requestWakeLock();
+      }
     });
   </script>
 </body>

@@ -3,6 +3,7 @@ import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import QRCode from 'qrcode';
 import { startServer } from './server.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -58,14 +59,17 @@ function getHostFromUrl(url) {
   }
 }
 
-function buildQrCodeUrl(value) {
-  const encoded = encodeURIComponent(value);
-  return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=12&data=${encoded}`;
+async function buildQrDataUrl(value) {
+  return QRCode.toDataURL(value, {
+    width: 220,
+    margin: 3,
+    color: { dark: '#000', light: '#fff' },
+  });
 }
 
-function buildConnectionHtml() {
+async function buildConnectionHtml() {
   const primaryUrl = getPrimaryLanUrl();
-  const qrUrl = buildQrCodeUrl(primaryUrl);
+  const qrDataUrl = await buildQrDataUrl(primaryUrl);
   const nativeState = serverInfo?.nativeInputReady
     ? 'Ready'
     : 'Input not ready';
@@ -124,7 +128,7 @@ function buildConnectionHtml() {
     <body>
       <main>
         <h1>${APP_NAME}</h1>
-        <img src="${escapeHtml(qrUrl)}" alt="QR code for ${escapeHtml(primaryUrl)}">
+        <img src="${escapeHtml(qrDataUrl)}" alt="QR code for ${escapeHtml(primaryUrl)}">
         <p>Scan with your phone camera.</p>
         <div class="status">${nativeState}</div>
       </main>
@@ -152,7 +156,9 @@ function showConnectionWindow() {
   });
 
   statusWindow.setMenu(null);
-  statusWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildConnectionHtml())}`);
+  buildConnectionHtml().then((html) => {
+    statusWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  });
   statusWindow.on('closed', () => {
     statusWindow = null;
   });
@@ -239,11 +245,17 @@ async function capturePrimaryScreenWithElectron() {
 }
 
 async function captureAllScreens() {
+  try {
+    return await capturePrimaryScreenWithElectron();
+  } catch (error) {
+    console.warn(`[capture] Electron screen capture failed: ${error?.message || error}`);
+  }
+
   if (process.platform === 'win32') {
     return captureAllScreensWithPowerShell();
   }
 
-  return capturePrimaryScreenWithElectron();
+  throw new Error('Screen capture is not available on this platform.');
 }
 
 function shouldShowConnectionWindow() {

@@ -15,12 +15,13 @@
     "rebuild:native": "electron-rebuild -f -w robotjs",
     "apply:win-icon": "node scripts/apply-windows-icon.cjs",
     "build:win": "npm run build:win:installer",
-    "build:win:installer": "npm run build:native:win && npm run build && electron-builder --win nsis",
+    "build:win:installer": "npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon && set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win nsis",
     "build:win:unpacked": "npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon",
     "build:win:portable": "npm run build:native:win && npm run build && electron-builder --win portable && npm run apply:win-icon"
   },
   "dependencies": {
     "express": "^4.21.2",
+    "qrcode": "^1.5.4",
     "ws": "^8.20.0"
   },
   "devDependencies": {
@@ -68,6 +69,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Linka",
+      "installerIcon": "build/linka-icon.ico",
+      "uninstallerIcon": "build/linka-icon.ico",
       "include": "build/installer.nsh"
     },
     "portable": {

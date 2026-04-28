@@ -26,50 +26,25 @@ function getNativeInputExePath() {
   );
 }
 
-function createWindowsSendInputAdapter() {
+function createWindowsSendInputAdapter(onStateChange) {
   const helperPath = getNativeInputExePath();
 
   if (process.platform !== 'win32' || !fs.existsSync(helperPath)) {
     return null;
   }
 
-  const helper = spawn(helperPath, {
-    stdio: ['pipe', 'ignore', 'pipe'],
-    windowsHide: true,
-  });
+  let alive = false;
+  let helper = null;
+  let retryCount = 0;
+  let retryTimer = null;
+  let draining = false;
+  let stdoutBuffer = '';
+  const MAX_RETRIES = 10;
+  const RETRY_DELAY_MS = 2000;
+  const NON_CRITICAL_COMMANDS = new Set(['move', 'scroll']);
+  const responseResolvers = new Map();
 
-  let alive = true;
-
-  helper.once('exit', (code, signal) => {
-    alive = false;
-    console.warn(`[input] win-sendinput helper exited code=${code} signal=${signal}`);
-  });
-
-  helper.once('error', (error) => {
-    alive = false;
-    console.warn(`[input] win-sendinput helper failed: ${error.message}`);
-  });
-
-  helper.stderr.on('data', (chunk) => {
-    const text = chunk.toString().trim();
-    if (text) console.warn(`[input:win-sendinput] ${text}`);
-  });
-
-  function send(command) {
-    if (!alive || helper.stdin.destroyed) {
-      return;
-    }
-
-    helper.stdin.write(`${JSON.stringify(command)}\n`);
-  }
-
-  process.once('exit', () => {
-    if (alive) {
-      helper.kill();
-    }
-  });
-
-  return {
+  const adapter = {
     name: 'win-sendinput',
     ready: true,
     move(dx, dy) {
@@ -85,7 +60,7 @@ function createWindowsSendInputAdapter() {
       send({ type: 'click', button, double: Boolean(double) });
     },
     scroll(dy) {
-      send({ type: 'scroll', dy: clampNumber(dy, -1200, 1200) });
+      send({ type: 'scroll', dy: clampNumber(dy * 40, -2400, 2400) });
     },
     zoom(direction = 'in') {
       send({ type: 'zoom', direction: direction === 'out' ? 'out' : 'in' });
@@ -108,13 +83,146 @@ function createWindowsSendInputAdapter() {
     toggleMute() {
       send({ type: 'togglemute' });
     },
+    getVolumeState() {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          responseResolvers.delete('volume_state');
+          resolve(null);
+        }, 3000);
+
+        responseResolvers.set('volume_state', (response) => {
+          clearTimeout(timeout);
+          resolve({ volume: response.volume, muted: response.muted });
+        });
+
+        send({ type: 'getvolume' });
+      });
+    },
     close() {
-      if (alive) {
+      if (retryTimer) clearTimeout(retryTimer);
+      if (alive && helper) {
         helper.stdin.end();
         helper.kill();
       }
     },
   };
+
+  function stateChangeHandler(state) {
+    adapter.ready = state.ready;
+    if (state.recovered) {
+      adapter.name = 'win-sendinput';
+    }
+    if (state.retriesExhausted) {
+      adapter.name = 'win-sendinput (unavailable)';
+    }
+    onStateChange?.(state);
+  }
+
+  function spawnHelper() {
+    helper = spawn(helperPath, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    alive = true;
+    draining = false;
+    stdoutBuffer = '';
+
+    helper.stdout.on('data', (chunk) => {
+      stdoutBuffer += chunk.toString();
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const response = JSON.parse(trimmed);
+          const resolver = responseResolvers.get(response.type);
+          if (resolver) {
+            responseResolvers.delete(response.type);
+            resolver(response);
+          }
+        } catch (_error) {
+          // ignore non-JSON stdout
+        }
+      }
+    });
+
+    helper.stdin.on('drain', () => {
+      draining = false;
+    });
+
+    helper.once('exit', (code, signal) => {
+      alive = false;
+      console.warn(`[input] win-sendinput helper exited code=${code} signal=${signal}`);
+      scheduleRetry();
+    });
+
+    helper.once('error', (error) => {
+      alive = false;
+      console.warn(`[input] win-sendinput helper failed: ${error.message}`);
+      scheduleRetry();
+    });
+
+    helper.stderr.on('data', (chunk) => {
+      const text = chunk.toString().trim();
+      if (text) console.warn(`[input:win-sendinput] ${text}`);
+    });
+  }
+
+  function scheduleRetry() {
+    if (retryTimer) return;
+    retryCount++;
+
+    if (retryCount > MAX_RETRIES) {
+      console.warn('[input] win-sendinput max retries reached. Input is unavailable.');
+      stateChangeHandler({ name: 'win-sendinput', ready: false, retriesExhausted: true });
+      return;
+    }
+
+    console.warn(`[input] win-sendinput retry ${retryCount}/${MAX_RETRIES} in ${RETRY_DELAY_MS}ms`);
+    stateChangeHandler({ name: 'win-sendinput', ready: false, retrying: true, retryCount });
+
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      try {
+        spawnHelper();
+        retryCount = 0;
+        console.warn('[input] win-sendinput helper recovered.');
+        stateChangeHandler({ name: 'win-sendinput', ready: true, recovered: true });
+      } catch (error) {
+        console.warn(`[input] win-sendinput respawn failed: ${error.message}`);
+        scheduleRetry();
+      }
+    }, RETRY_DELAY_MS);
+  }
+
+  function send(command) {
+    if (!alive || !helper || helper.stdin.destroyed) {
+      return;
+    }
+
+    if (draining && NON_CRITICAL_COMMANDS.has(command.type)) {
+      return;
+    }
+
+    const ok = helper.stdin.write(`${JSON.stringify(command)}\n`);
+    if (!ok) {
+      draining = true;
+    }
+  }
+
+  process.once('exit', () => {
+    if (retryTimer) clearTimeout(retryTimer);
+    if (alive && helper) {
+      helper.stdin.end();
+      helper.kill();
+    }
+  });
+
+  spawnHelper();
+
+  return adapter;
 }
 
 async function createRobotAdapter() {
@@ -219,8 +327,10 @@ function createLogOnlyAdapter() {
   };
 }
 
-export async function createInputAdapter() {
-  const winSendInput = createWindowsSendInputAdapter();
+export async function createInputAdapter(options = {}) {
+  const onStateChange = typeof options.onStateChange === 'function' ? options.onStateChange : null;
+
+  const winSendInput = createWindowsSendInputAdapter(onStateChange);
   if (winSendInput) {
     return winSendInput;
   }

@@ -11,9 +11,12 @@ import { createInputAdapter } from './input-adapter.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BIND_HOST = '0.0.0.0';
-const MAX_BRIDGE_MESSAGES = 30;
-let loggingReady = false;
-let bridgeMessages = [];
+  const MAX_BRIDGE_MESSAGES = 30;
+  const MAX_BRIDGE_IMAGE_BYTES = 5 * 1024 * 1024;
+  const WS_MAX_PAYLOAD_BYTES = 6 * 1024 * 1024;
+  const WS_MAX_MSG_PER_SEC = 200;
+  let loggingReady = false;
+  let bridgeMessages = [];
 
 function resolveDefaultPort() {
   if (process.env.NODE_ENV === 'production') {
@@ -198,10 +201,32 @@ export async function startServer(options = {}) {
     : null;
   const app = express();
   const server = createHttpServer(app);
-  const wss = new WebSocketServer({ server });
-  const input = await createInputAdapter();
+  const wss = new WebSocketServer({ server, maxPayload: WS_MAX_PAYLOAD_BYTES });
   const clients = new Set();
   const connectionInfo = getConnectionInfo(port);
+  const HEARTBEAT_INTERVAL_MS = 30000;
+  const HEARTBEAT_TIMEOUT_MS = 10000;
+  let heartbeatTimer = null;
+
+  const input = await createInputAdapter({
+    onStateChange: (state) => {
+      if (state.retrying) {
+        console.warn(`[input] Backend degraded: ${input.name} (retry ${state.retryCount})`);
+      } else if (state.recovered) {
+        console.warn('[input] Backend recovered.');
+      } else if (state.retriesExhausted) {
+        console.warn('[input] Backend permanently unavailable.');
+      }
+
+      broadcast({
+        event: 'system_state',
+        payload: {
+          inputBackend: input.name,
+          nativeInputReady: input.ready,
+        },
+      });
+    },
+  });
 
   function sendJson(ws, data) {
     if (ws.readyState === 1) {
@@ -286,6 +311,15 @@ export async function startServer(options = {}) {
         return true;
       }
 
+      if (message.type === 'image' && message.content.length > MAX_BRIDGE_IMAGE_BYTES) {
+        console.warn('[ws] Bridge image too large, ignoring.');
+        sendJson(ws, {
+          event: 'bridge_capture_error',
+          payload: { message: `Image too large (${(message.content.length / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.` },
+        });
+        return true;
+      }
+
       appendBridgeMessage(message);
       broadcast({ event: 'bridge_message', payload: message });
       return true;
@@ -295,6 +329,13 @@ export async function startServer(options = {}) {
   }
 
   app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:;");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    next();
+  });
   app.use(logRequest);
   app.use(preventBrowserCache);
 
@@ -354,8 +395,38 @@ export async function startServer(options = {}) {
     });
     sendJson(ws, { type: 'hello', inputBackend: input.name, nativeInputReady: input.ready });
 
+    if (input.getVolumeState) {
+      input.getVolumeState().then((state) => {
+        if (state) {
+          sendJson(ws, { event: 'volume_state', payload: state });
+        }
+      });
+    }
+
+    ws._messageTimestamps = [];
+    ws._rateLimited = false;
+
     ws.on('message', async (message) => {
       try {
+        if (Buffer.isBuffer(message) && message.length > WS_MAX_PAYLOAD_BYTES) {
+          return;
+        }
+
+        const now = Date.now();
+        const windowStart = now - 1000;
+        ws._messageTimestamps = ws._messageTimestamps.filter((t) => t > windowStart);
+
+        if (ws._messageTimestamps.length >= WS_MAX_MSG_PER_SEC) {
+          if (!ws._rateLimited) {
+            ws._rateLimited = true;
+            console.warn(`[ws] Rate limit hit for ${req.socket.remoteAddress}. Dropping messages.`);
+          }
+          return;
+        }
+
+        ws._rateLimited = false;
+        ws._messageTimestamps.push(now);
+
         const data = JSON.parse(message.toString());
         if (!(await handleBridgeEvent(ws, data))) {
           handleCommand(input, data);
@@ -366,9 +437,33 @@ export async function startServer(options = {}) {
     });
 
     ws.on('close', () => {
+      clearTimeout(ws._heartbeatTimeout);
       clients.delete(ws);
       console.log(`[ws] Client disconnected. Total clients: ${clients.size}`);
     });
+
+    ws.on('pong', () => {
+      clearTimeout(ws._heartbeatTimeout);
+    });
+  });
+
+  heartbeatTimer = setInterval(() => {
+    for (const client of clients) {
+      if (client._heartbeatTimeout) {
+        clearTimeout(client._heartbeatTimeout);
+      }
+
+      client._heartbeatTimeout = setTimeout(() => {
+        console.warn('[ws] Client heartbeat timeout. Terminating connection.');
+        client.terminate();
+      }, HEARTBEAT_TIMEOUT_MS);
+
+      client.ping();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+
+  wss.on('close', () => {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
   });
 
   await new Promise((resolve, reject) => {
@@ -392,6 +487,10 @@ export async function startServer(options = {}) {
     inputBackend: input.name,
     nativeInputReady: input.ready,
     close: async () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      for (const client of clients) {
+        clearTimeout(client._heartbeatTimeout);
+      }
       await new Promise((resolve) => server.close(resolve));
       input.close?.();
     },

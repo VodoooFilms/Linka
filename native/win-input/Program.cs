@@ -74,6 +74,9 @@ internal static class Program
             case "togglemute":
                 ToggleMute();
                 break;
+            case "getvolume":
+                GetVolumeState();
+                break;
         }
     }
 
@@ -108,7 +111,7 @@ internal static class Program
 
     private static void Scroll(int dy)
     {
-        var wheelData = Math.Clamp(dy * 40, -2400, 2400);
+        var wheelData = Math.Clamp(dy, -2400, 2400);
         if (wheelData != 0)
         {
             SendMouse(0, 0, wheelData, MOUSEEVENTF_WHEEL);
@@ -208,6 +211,20 @@ internal static class Program
         Marshal.ThrowExceptionForHR(endpoint.Value.GetMute(out var muted));
         var context = VolumeEventContext;
         Marshal.ThrowExceptionForHR(endpoint.Value.SetMute(!muted, ref context));
+    }
+
+    private static void GetVolumeState()
+    {
+        using var endpoint = GetAudioEndpointVolume();
+        Marshal.ThrowExceptionForHR(endpoint.Value.GetMasterVolumeLevelScalar(out var volume));
+        Marshal.ThrowExceptionForHR(endpoint.Value.GetMute(out var muted));
+        var response = JsonSerializer.Serialize(new
+        {
+            type = "volume_state",
+            volume = Math.Round(volume, 4),
+            muted,
+        });
+        Console.Out.WriteLine(response);
     }
 
     private static void SendMouse(int dx, int dy, int mouseData, uint flags)
