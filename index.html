@@ -348,6 +348,19 @@
       gap: 8px;
     }
 
+    .bridge-header-actions {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .bridge-action-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
     .bridge-back,
     .bridge-capture,
     .bridge-clear {
@@ -361,6 +374,33 @@
 
     .bridge-capture:disabled {
       opacity: 0.55;
+    }
+
+    .bridge-monitors {
+      display: none;
+    }
+
+    .bridge-monitor {
+      font-size: 9px;
+      font-weight: 700;
+      color: #9fc0ff;
+      cursor: pointer;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      user-select: none;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      font-family: inherit;
+      line-height: 1;
+    }
+
+    .bridge-monitor.active {
+      color: var(--accent);
+    }
+
+    .bridge-monitor.dimmed {
+      color: rgba(159, 192, 255, 0.25);
     }
 
     .bridge-send {
@@ -965,20 +1005,26 @@
           <span>Phone &harr; PC</span>
         </div>
         <div class="bridge-header-actions">
-          <button id="bridgeCaptureBtn" class="bridge-capture" type="button">Capture</button>
-          <button id="bridgeClearBtn" class="bridge-clear" type="button">Clear</button>
+          <div class="bridge-action-group">
+            <button id="bridgeCaptureBtn" class="bridge-capture" type="button">Capture</button>
+            <span id="bridgeMonitor1" class="bridge-monitor" data-display-id="">Monitor 1</span>
+          </div>
+          <div class="bridge-action-group">
+            <button id="bridgeClearBtn" class="bridge-clear" type="button">Clear</button>
+            <span id="bridgeMonitor2" class="bridge-monitor" data-display-id="">Monitor 2</span>
+          </div>
         </div>
       </header>
 
       <div id="bridgeFeed" class="bridge-feed" aria-live="polite">
-        <p class="bridge-empty">No bridge items yet. Send text or an image to share it across this local session.</p>
+        <p class="bridge-empty">No bridge items yet. Send text, a file, or an image to share it across this local session.</p>
       </div>
 
       <form id="bridgeForm" class="bridge-composer" autocomplete="off">
         <input id="bridgeInput" class="bridge-input" type="text" placeholder="Send text locally" aria-label="Bridge text" autocomplete="off">
         <button class="bridge-send" type="submit">Send</button>
-        <button id="bridgeUploadBtn" class="bridge-upload" type="button">Upload Image</button>
-        <input id="bridgeFileInput" class="bridge-file" type="file" accept="image/*" aria-label="Upload bridge image">
+        <button id="bridgeUploadBtn" class="bridge-upload" type="button">Upload File (5MB max)</button>
+        <input id="bridgeFileInput" class="bridge-file" type="file" aria-label="Upload bridge file">
       </form>
     </section>
   </main>
@@ -1025,6 +1071,8 @@
     const bridgeInput = document.getElementById('bridgeInput');
     const bridgeUploadBtn = document.getElementById('bridgeUploadBtn');
     const bridgeFileInput = document.getElementById('bridgeFileInput');
+    const bridgeMonitor1 = document.getElementById('bridgeMonitor1');
+    const bridgeMonitor2 = document.getElementById('bridgeMonitor2');
     const dragZone = document.getElementById('dragZone');
     const trackpadZone = document.getElementById('trackpadZone');
     const volumeZone = document.getElementById('volumeZone');
@@ -1057,6 +1105,7 @@
     let bridgeOpen = false;
     let bridgeCapturing = false;
     let bridgeMessages = [];
+    let selectedDisplayId = null;
 
     const bridgeSource = window.matchMedia?.('(pointer: coarse)').matches ? 'phone' : 'pc';
 
@@ -1193,7 +1242,25 @@
           download.className = 'bridge-action';
           download.type = 'button';
           download.textContent = 'Download';
-          download.addEventListener('click', () => downloadBridgeImage(message));
+          download.addEventListener('click', () => downloadBridgeItem(message));
+          item.append(download);
+        } else if (message.type === 'file') {
+          const fileInfo = document.createElement('div');
+          fileInfo.className = 'bridge-text';
+          fileInfo.style.cssText = 'display:flex;align-items:center;gap:10px;';
+          const icon = document.createElement('span');
+          icon.textContent = '\u{1F4C4}';
+          icon.style.cssText = 'font-size:24px;';
+          const details = document.createElement('span');
+          details.innerHTML = `<strong>${escapeBridgeHtml(message.filename || 'file')}</strong><br><span style="color:var(--muted);font-size:12px;">${formatBridgeFileSize(message.size)}</span>`;
+          fileInfo.append(icon, details);
+          item.append(fileInfo);
+
+          const download = document.createElement('button');
+          download.className = 'bridge-action';
+          download.type = 'button';
+          download.textContent = 'Download';
+          download.addEventListener('click', () => downloadBridgeItem(message));
           item.append(download);
         } else {
           const text = document.createElement('p');
@@ -1246,13 +1313,27 @@
       }
     }
 
-    function downloadBridgeImage(message) {
+    function downloadBridgeItem(message) {
       const link = document.createElement('a');
-      link.href = normalizeBridgeImageSource(message.content);
-      link.download = `linka-bridge-${message.id || Date.now()}.png`;
+      link.href = message.type === 'image'
+        ? normalizeBridgeImageSource(message.content)
+        : message.content;
+      link.download = message.type === 'file'
+        ? (message.filename || 'file')
+        : `linka-bridge-${message.id || Date.now()}.png`;
       document.body.append(link);
       link.click();
       link.remove();
+    }
+
+    function escapeBridgeHtml(value) {
+      return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    }
+
+    function formatBridgeFileSize(bytes) {
+      if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     }
 
     function upsertBridgeMessage(message) {
@@ -1281,26 +1362,74 @@
       } else if (data.event === 'bridge_capture_error') {
         setBridgeCapturing(false);
         showClientError(data.payload?.message || 'Screen capture failed.');
+      } else if (data.event === 'bridge_monitors') {
+        renderMonitorButtons(data.payload?.displays || []);
       }
     }
+
+    function renderMonitorButtons(displays) {
+      bridgeMonitor1.style.display = 'none';
+      bridgeMonitor2.style.display = 'none';
+      if (!displays || displays.length <= 1) return;
+
+      for (let i = 0; i < Math.min(displays.length, 2); i++) {
+        const display = displays[i];
+        const el = i === 0 ? bridgeMonitor1 : bridgeMonitor2;
+        el.textContent = display.label;
+        el.dataset.displayId = display.id;
+        el.style.display = '';
+        el.classList.remove('active', 'dimmed');
+      }
+    }
+
+    function updateMonitorSelection() {
+      if (!selectedDisplayId) {
+        bridgeMonitor1.classList.remove('active', 'dimmed');
+        bridgeMonitor2.classList.remove('active', 'dimmed');
+        return;
+      }
+      const target1 = bridgeMonitor1.dataset.displayId === selectedDisplayId;
+      const target2 = bridgeMonitor2.dataset.displayId === selectedDisplayId;
+      bridgeMonitor1.classList.toggle('active', target1);
+      bridgeMonitor1.classList.toggle('dimmed', !target1 && bridgeMonitor2.style.display !== 'none');
+      bridgeMonitor2.classList.toggle('active', target2);
+      bridgeMonitor2.classList.toggle('dimmed', !target2 && bridgeMonitor1.style.display !== 'none');
+    }
+
+    bridgeMonitor1.addEventListener('click', () => {
+      selectedDisplayId = selectedDisplayId === bridgeMonitor1.dataset.displayId ? null : bridgeMonitor1.dataset.displayId;
+      updateMonitorSelection();
+    });
+
+    bridgeMonitor2.addEventListener('click', () => {
+      selectedDisplayId = selectedDisplayId === bridgeMonitor2.dataset.displayId ? null : bridgeMonitor2.dataset.displayId;
+      updateMonitorSelection();
+    });
 
     function requestBridgeSync() {
       send({ event: 'bridge_sync_request' });
     }
 
-    function sendBridgeMessage(type, content) {
+    function sendBridgeMessage(type, content, extra = {}) {
       const trimmedContent = type === 'text' ? content.trim() : content;
       if (!trimmedContent) return;
 
+      const payload = {
+        id: createBridgeId(),
+        type,
+        content: trimmedContent,
+        from: bridgeSource,
+        timestamp: Date.now(),
+      };
+
+      if (type === 'file') {
+        payload.filename = extra.filename || 'file';
+        payload.size = extra.size || 0;
+      }
+
       const sent = send({
         event: 'bridge_message',
-        payload: {
-          id: createBridgeId(),
-          type,
-          content: trimmedContent,
-          from: bridgeSource,
-          timestamp: Date.now(),
-        },
+        payload,
       });
 
       if (!sent) {
@@ -1327,6 +1456,10 @@
       bridgeBtn.setAttribute('aria-pressed', bridgeOpen ? 'true' : 'false');
 
       if (bridgeOpen) {
+        selectedDisplayId = null;
+        bridgeMonitor1.style.display = 'none';
+        bridgeMonitor2.style.display = 'none';
+        send({ event: 'bridge_monitors_request' });
         requestBridgeSync();
       } else {
         bridgeInput.blur();
@@ -1411,7 +1544,11 @@
 
       clearClientError();
       setBridgeCapturing(true);
-      if (!send({ event: 'bridge_capture_request' })) {
+      const request = { event: 'bridge_capture_request' };
+      if (selectedDisplayId) {
+        request.payload = { displayId: selectedDisplayId };
+      }
+      if (!send(request)) {
         setBridgeCapturing(false);
         showClientError('Bridge is offline. Reconnect before capturing.');
       }
@@ -1436,18 +1573,22 @@
       if (!file) return;
 
       if (file.size > MAX_BRIDGE_IMAGE_BYTES) {
-        showClientError(`Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.`);
+        showClientError(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.`);
         return;
       }
 
       const reader = new FileReader();
       reader.addEventListener('load', () => {
         if (typeof reader.result === 'string') {
-          sendBridgeMessage('image', reader.result);
+          const isImage = file.type.startsWith('image/');
+          sendBridgeMessage(isImage ? 'image' : 'file', reader.result, {
+            filename: file.name,
+            size: file.size,
+          });
         }
       });
       reader.addEventListener('error', () => {
-        showClientError('Image upload failed.');
+        showClientError('File upload failed.');
       });
       reader.readAsDataURL(file);
     });

@@ -222,10 +222,24 @@ try {
   return `data:image/png;base64,${base64}`;
 }
 
-async function capturePrimaryScreenWithElectron() {
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.size;
-  const scaleFactor = primaryDisplay.scaleFactor || 1;
+function getAvailableDisplays() {
+  const displays = screen.getAllDisplays();
+  return displays.map((display, index) => ({
+    id: String(display.id),
+    label: `Monitor ${index + 1}`,
+    bounds: display.bounds,
+    isPrimary: index === 0,
+  }));
+}
+
+async function capturePrimaryScreenWithElectron(targetDisplayId) {
+  const displays = screen.getAllDisplays();
+  const targetDisplay = targetDisplayId
+    ? displays.find((d) => String(d.id) === targetDisplayId)
+    : null;
+  const display = targetDisplay || screen.getPrimaryDisplay();
+  const { width, height } = display.size;
+  const scaleFactor = display.scaleFactor || 1;
   const thumbnailSize = {
     width: Math.round(width * scaleFactor),
     height: Math.round(height * scaleFactor),
@@ -235,7 +249,7 @@ async function capturePrimaryScreenWithElectron() {
     types: ['screen'],
     thumbnailSize,
   });
-  const source = sources.find((item) => item.display_id === String(primaryDisplay.id)) || sources[0];
+  const source = sources.find((item) => item.display_id === String(display.id)) || sources[0];
 
   if (!source || source.thumbnail.isEmpty()) {
     throw new Error('No screen source was available.');
@@ -244,9 +258,9 @@ async function capturePrimaryScreenWithElectron() {
   return `data:image/png;base64,${source.thumbnail.toPNG().toString('base64')}`;
 }
 
-async function captureAllScreens() {
+async function captureAllScreens(targetDisplayId) {
   try {
-    return await capturePrimaryScreenWithElectron();
+    return await capturePrimaryScreenWithElectron(targetDisplayId);
   } catch (error) {
     console.warn(`[capture] Electron screen capture failed: ${error?.message || error}`);
   }
@@ -352,6 +366,7 @@ if (!gotTheLock) {
       process.env.LINKA_LOG_FILE = path.join(logDir, 'linka.log');
       serverInfo = await startServer({
         captureScreen: captureAllScreens,
+        getDisplays: getAvailableDisplays,
         onClientConnected: () => {
           closeConnectionWindow();
         },

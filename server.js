@@ -174,19 +174,32 @@ function handleCommand(input, data) {
 function normalizeBridgeMessage(message) {
   if (!message || typeof message !== 'object') return null;
 
-  const type = message.type === 'image' ? 'image' : message.type === 'text' ? 'text' : null;
+  const type = message.type === 'image'
+    ? 'image'
+    : message.type === 'text'
+      ? 'text'
+      : message.type === 'file'
+        ? 'file'
+        : null;
   const from = message.from === 'pc' ? 'pc' : message.from === 'phone' ? 'phone' : null;
   const content = typeof message.content === 'string' ? message.content : '';
 
   if (!type || !from || !content) return null;
 
-  return {
+  const result = {
     id: typeof message.id === 'string' && message.id ? message.id : randomUUID(),
     type,
     content,
     from,
     timestamp: Number.isFinite(Number(message.timestamp)) ? Number(message.timestamp) : Date.now(),
   };
+
+  if (type === 'file') {
+    result.filename = typeof message.filename === 'string' ? message.filename : 'file';
+    result.size = Number.isFinite(Number(message.size)) ? Number(message.size) : 0;
+  }
+
+  return result;
 }
 
 export async function startServer(options = {}) {
@@ -198,6 +211,9 @@ export async function startServer(options = {}) {
     : null;
   const captureScreen = typeof options.captureScreen === 'function'
     ? options.captureScreen
+    : null;
+  const getDisplays = typeof options.getDisplays === 'function'
+    ? options.getDisplays
     : null;
   const app = express();
   const server = createHttpServer(app);
@@ -278,7 +294,8 @@ export async function startServer(options = {}) {
       }
 
       try {
-        const content = await captureScreen();
+        const displayId = typeof data.payload?.displayId === 'string' ? data.payload.displayId : undefined;
+        const content = await captureScreen(displayId);
         const message = normalizeBridgeMessage({
           id: randomUUID(),
           type: 'image',
@@ -304,6 +321,15 @@ export async function startServer(options = {}) {
       return true;
     }
 
+    if (data.event === 'bridge_monitors_request') {
+      const displays = getDisplays ? getDisplays() : [];
+      sendJson(ws, {
+        event: 'bridge_monitors',
+        payload: { displays },
+      });
+      return true;
+    }
+
     if (data.event === 'bridge_message') {
       const message = normalizeBridgeMessage(data.payload);
       if (!message) {
@@ -311,11 +337,11 @@ export async function startServer(options = {}) {
         return true;
       }
 
-      if (message.type === 'image' && message.content.length > MAX_BRIDGE_IMAGE_BYTES) {
-        console.warn('[ws] Bridge image too large, ignoring.');
+      if ((message.type === 'image' || message.type === 'file') && message.content.length > MAX_BRIDGE_IMAGE_BYTES) {
+        console.warn('[ws] Bridge file too large, ignoring.');
         sendJson(ws, {
           event: 'bridge_capture_error',
-          payload: { message: `Image too large (${(message.content.length / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.` },
+          payload: { message: `File too large (${(message.content.length / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.` },
         });
         return true;
       }
