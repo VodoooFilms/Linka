@@ -1,7 +1,7 @@
 {
   "name": "linka",
   "version": "0.0.0",
-  "description": "A local phone remote controller and temporary text/image transfer bridge for Windows.",
+  "description": "A local phone remote controller and temporary text/file transfer bridge for Windows.",
   "license": "MIT",
   "type": "module",
   "main": "main.js",
@@ -12,12 +12,12 @@
     "start": "node server.js",
     "lint": "tsc --noEmit",
     "build:native:win": "dotnet publish native/win-input/Linka.NativeInput.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true",
-    "rebuild:native": "electron-rebuild -f -w robotjs",
+    "patch:electron-icon": "node scripts/patch-electron-icon.cjs",
     "apply:win-icon": "node scripts/apply-windows-icon.cjs",
     "build:win": "npm run build:win:installer",
-    "build:win:installer": "npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon && set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win nsis",
-    "build:win:unpacked": "npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon",
-    "build:win:portable": "npm run build:native:win && npm run build && electron-builder --win portable && npm run apply:win-icon"
+    "build:win:installer": "npm run patch:electron-icon && npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon && set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win nsis",
+    "build:win:unpacked": "npm run patch:electron-icon && npm run build:native:win && npm run build && electron-builder --win --dir && npm run apply:win-icon",
+    "build:win:portable": "npm run patch:electron-icon && npm run build:native:win && npm run build && electron-builder --win portable && npm run apply:win-icon"
   },
   "dependencies": {
     "express": "^4.21.2",
@@ -30,7 +30,6 @@
     "@types/ws": "^8.18.1",
     "electron": "^41.1.0",
     "electron-builder": "^26.8.1",
-    "electron-rebuild": "^3.2.9",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   },
@@ -41,6 +40,7 @@
     "directories": {
       "output": "dist_electron"
     },
+    "afterPack": "scripts/after-pack.cjs",
     "files": [
       "build/icon.ico",
       "build/linka-icon.ico",

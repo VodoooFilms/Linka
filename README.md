@@ -9,7 +9,7 @@ It exists for couch, TV, projector, and desk setups where reaching for a physica
 Linka has two local modes:
 
 - Remote mode: phone-based trackpad, keyboard, scroll, mouse, volume, and mute controls.
-- Bridge mode: a temporary local space for sending text and images between phone and PC over the same WebSocket connection.
+- Bridge mode: a temporary local space for sending text, images, and small files between phone and PC over the same WebSocket connection.
 
 ## Screenshots
 
@@ -24,9 +24,9 @@ Linka has two local modes:
 - Pinch-to-zoom and multi-touch gesture support.
 - Scroll, keyboard, volume, and mute controls.
 - **Volume sync**: phone slider reflects the actual PC volume on connect.
-- Bridge mode for local text and image transfer between phone and PC.
+- Bridge mode for local text, image, and file transfer between phone and PC.
 - Ephemeral in-memory Bridge messages with no database, cloud sync, or permanent storage.
-- Bridge image uploads limited to 5 MB per image.
+- Bridge uploads limited to 5 MB per file, measured before base64 encoding.
 - Portrait and landscape mobile layouts with fullscreen support.
 - Local HTTP/WebSocket connection over your network — no cloud dependency.
 - **QR code generated locally** — no external API calls, your LAN IP never leaves the PC.
@@ -38,7 +38,7 @@ Linka has two local modes:
 
 - Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, and X-DNS-Prefetch-Control headers.
 - WebSocket rate limiting (200 msg/s per client).
-- WebSocket message size limit (6 MB) and bridge image size limit (5 MB).
+- WebSocket message size limit (8 MB) and Bridge file size limit (5 MB decoded).
 - WebSocket heartbeat (30 s) detects and terminates stale connections.
 - Clipboard fallback for non-HTTPS contexts.
 - Electron context isolation enabled; node integration disabled in renderer.
@@ -113,6 +113,8 @@ The installed app starts with Windows in the background, launches the local serv
 |-- connection-preload.cjs      # Electron preload (context isolation)
 |-- native/win-input/           # .NET Windows input helper (SendInput + Core Audio)
 |-- scripts/                    # Build helper scripts
+|   |-- patch-electron-icon.cjs  # Replaces Electron's base icon before Windows packaging
+|   `-- apply-windows-icon.cjs   # Applies Linka icon to win-unpacked/Linka.exe
 |-- docs/images/                # README screenshots
 |-- build/linka-icon.ico        # Windows app icon
 |-- build/linka-logo.png        # Project logo asset

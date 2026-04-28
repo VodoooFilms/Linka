@@ -358,7 +358,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 4px;
+      gap: 8px;
     }
 
     .bridge-back,
@@ -1093,7 +1093,7 @@
     const PINCH_MAX_STEPS_PER_MOVE = 3;
     const TAP_MAX_MS = 220;
     const TAP_MOVE_TOLERANCE = 7;
-    const MAX_BRIDGE_IMAGE_BYTES = 5 * 1024 * 1024;
+    const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
 
     let socket;
     let reconnectTimer = 0;
@@ -1572,7 +1572,7 @@
       bridgeFileInput.value = '';
       if (!file) return;
 
-      if (file.size > MAX_BRIDGE_IMAGE_BYTES) {
+      if (file.size > MAX_BRIDGE_FILE_BYTES) {
         showClientError(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.`);
         return;
       }

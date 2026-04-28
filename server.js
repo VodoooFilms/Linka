@@ -11,12 +11,26 @@ import { createInputAdapter } from './input-adapter.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const BIND_HOST = '0.0.0.0';
-  const MAX_BRIDGE_MESSAGES = 30;
-  const MAX_BRIDGE_IMAGE_BYTES = 5 * 1024 * 1024;
-  const WS_MAX_PAYLOAD_BYTES = 6 * 1024 * 1024;
-  const WS_MAX_MSG_PER_SEC = 200;
-  let loggingReady = false;
-  let bridgeMessages = [];
+const MAX_BRIDGE_MESSAGES = 30;
+const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
+const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
+const WS_MAX_MSG_PER_SEC = 200;
+let loggingReady = false;
+let bridgeMessages = [];
+
+function getBridgeContentBytes(content) {
+  if (typeof content !== 'string') return 0;
+
+  const base64 = content.startsWith('data:')
+    ? content.slice(content.indexOf(',') + 1)
+    : content;
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+}
+
+function formatBytes(bytes) {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
 
 function resolveDefaultPort() {
   if (process.env.NODE_ENV === 'production') {
@@ -337,11 +351,15 @@ export async function startServer(options = {}) {
         return true;
       }
 
-      if ((message.type === 'image' || message.type === 'file') && message.content.length > MAX_BRIDGE_IMAGE_BYTES) {
+      const mediaBytes = message.type === 'image' || message.type === 'file'
+        ? getBridgeContentBytes(message.content)
+        : 0;
+
+      if (mediaBytes > MAX_BRIDGE_FILE_BYTES) {
         console.warn('[ws] Bridge file too large, ignoring.');
         sendJson(ws, {
           event: 'bridge_capture_error',
-          payload: { message: `File too large (${(message.content.length / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.` },
+          payload: { message: `File too large (${formatBytes(mediaBytes)}). Maximum is 5MB.` },
         });
         return true;
       }
