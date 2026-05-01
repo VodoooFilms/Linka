@@ -1,9 +1,13 @@
 import { app, BrowserWindow, Menu, Tray, clipboard, desktopCapturer, ipcMain, nativeImage, screen, shell } from 'electron';
-import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import QRCode from 'qrcode';
+import {
+  capturePlatformScreenFallback,
+  configurePlatformAutoStart,
+  getPlatformTrayIconPath,
+} from './platform/desktop.js';
 import { startServer } from './server.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,13 +18,11 @@ let statusWindow = null;
 let serverInfo = null;
 
 const gotTheLock = app.requestSingleInstanceLock();
-const iconPath = path.join(__dirname, 'build', 'linka-icon.ico');
+const iconPath = getPlatformTrayIconPath(__dirname);
 const APP_NAME = 'Linka';
 const APP_ID = 'com.linka.desktop';
 const START_HIDDEN_ARG = '--hidden';
 const AUTO_START_ENABLED = true;
-const STARTUP_REG_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-const STARTUP_REG_NAME = APP_NAME;
 const DEFAULT_PRODUCTION_PORT = 3067;
 
 function getElectronPort() {
@@ -170,56 +172,21 @@ function closeConnectionWindow() {
   }
 }
 
-function captureAllScreensWithPowerShell() {
-  const script = `
-Add-Type @"
-using System.Runtime.InteropServices;
-public static class DpiAwareness {
-  [DllImport("user32.dll")]
-  public static extern bool SetProcessDPIAware();
-}
-"@
-[void][DpiAwareness]::SetProcessDPIAware()
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
-$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$stream = New-Object System.IO.MemoryStream
-try {
-  $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
-  $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
-  [Convert]::ToBase64String($stream.ToArray())
-} finally {
-  $stream.Dispose()
-  $graphics.Dispose()
-  $bitmap.Dispose()
-}
-`;
-
-  const result = spawnSync('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    script,
-  ], {
-    encoding: 'utf8',
-    maxBuffer: 60 * 1024 * 1024,
-    windowsHide: true,
-  });
-
-  if (result.status !== 0) {
-    throw new Error(result.stderr?.trim() || 'PowerShell screen capture failed.');
+function createTrayIcon() {
+  if (process.platform === 'darwin') {
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+        <rect x="4" y="4" width="10" height="10" rx="3" ry="3" fill="none" stroke="#000" stroke-width="2"/>
+      </svg>
+    `;
+    const icon = nativeImage.createFromBuffer(Buffer.from(svg));
+    const sized = icon.resize({ width: 18, height: 18 });
+    sized.setTemplateImage(true);
+    return sized;
   }
 
-  const base64 = result.stdout.trim();
-  if (!base64) {
-    throw new Error('PowerShell screen capture returned an empty image.');
-  }
-
-  return `data:image/png;base64,${base64}`;
+  const icon = nativeImage.createFromPath(iconPath);
+  return icon.isEmpty() ? nativeImage.createEmpty() : icon;
 }
 
 function getAvailableDisplays() {
@@ -265,11 +232,7 @@ async function captureAllScreens(targetDisplayId) {
     console.warn(`[capture] Electron screen capture failed: ${error?.message || error}`);
   }
 
-  if (process.platform === 'win32') {
-    return captureAllScreensWithPowerShell();
-  }
-
-  throw new Error('Screen capture is not available on this platform.');
+  return capturePlatformScreenFallback();
 }
 
 function shouldShowConnectionWindow() {
@@ -280,38 +243,13 @@ function isPortableBuild() {
   return Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
 }
 
-function isStartupRegistrationSupported() {
-  return process.platform === 'win32' && app.isPackaged && !isPortableBuild();
-}
-
-function runRegistryCommand(args) {
-  const result = spawnSync('reg.exe', args, {
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-
-  return result.status === 0;
-}
-
-function setStartupRegistration(enabled) {
-  if (!isStartupRegistrationSupported()) {
-    return false;
-  }
-
-  if (!enabled) {
-    return runRegistryCommand(['delete', STARTUP_REG_PATH, '/v', STARTUP_REG_NAME, '/f']);
-  }
-
-  const command = `"${process.execPath}" ${START_HIDDEN_ARG}`;
-  return runRegistryCommand(['add', STARTUP_REG_PATH, '/v', STARTUP_REG_NAME, '/t', 'REG_SZ', '/d', command, '/f']);
-}
-
 function configureAutoStart() {
-  if (!AUTO_START_ENABLED) {
-    return;
-  }
-
-  setStartupRegistration(true);
+  configurePlatformAutoStart({
+    app,
+    appName: APP_NAME,
+    enabled: AUTO_START_ENABLED && !isPortableBuild(),
+    startHiddenArg: START_HIDDEN_ARG,
+  });
 }
 
 function rebuildTray() {
@@ -377,8 +315,7 @@ if (!gotTheLock) {
       return;
     }
 
-    const icon = nativeImage.createFromPath(iconPath);
-    tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+    tray = new Tray(createTrayIcon());
     rebuildTray();
 
     if (shouldShowConnectionWindow()) {

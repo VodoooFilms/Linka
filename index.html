@@ -50,10 +50,12 @@
     }
 
     .app {
-      width: 100vw;
+      width: 100%;
       height: var(--app-height, 100dvh);
       display: grid;
       grid-template-rows: 52px 1fr;
+      overflow: hidden;
+      isolation: isolate;
       background:
         linear-gradient(90deg, rgba(0, 217, 139, 0.06), transparent 28%),
         linear-gradient(270deg, rgba(117, 167, 255, 0.06), transparent 32%),
@@ -67,6 +69,7 @@
     .statusbar {
       position: relative;
       grid-row: 1;
+      z-index: 5;
       min-height: 52px;
       display: grid;
       grid-template-columns: minmax(0, 1fr) 42px;
@@ -74,7 +77,7 @@
       gap: 8px;
       padding: 8px 10px;
       border-bottom: 1px solid var(--line);
-      background: rgba(8, 10, 12, 0.86);
+      background: #080a0c;
     }
 
     .statusbar,
@@ -1085,8 +1088,6 @@
 
     const SENSITIVITY = 1.45;
     const SCROLL_SENSITIVITY = 0.65;
-    const VOLUME_DRAG_SENSITIVITY = 0.0035;
-    const VOLUME_DRAG_THRESHOLD = 0.01;
     const CURSOR_DOT_OFFSET = 72;
     const CURSOR_DOT_PADDING = 8;
     const PINCH_ZOOM_THRESHOLD = 18;
@@ -1102,6 +1103,7 @@
     let isConnected = false;
     let keyboardOpen = false;
     let ctrlArmed = false;
+    let shortcutModifier = 'ctrl';
     let bridgeOpen = false;
     let bridgeCapturing = false;
     let bridgeMessages = [];
@@ -1157,14 +1159,18 @@
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'hello' && !data.nativeInputReady) {
-            setStatus('connected', 'Test mode');
+          if (data.type === 'hello') {
+            updateShortcutModifierUi(data.inputBackend);
+            if (!data.nativeInputReady) {
+              setStatus('connected', 'Test mode');
+            }
           } else if (data.event === 'volume_state') {
             if (data.payload && typeof data.payload.volume === 'number') {
               lastVolumeSent = data.payload.volume;
               renderVolume(lastVolumeSent);
             }
           } else if (data.event === 'system_state') {
+            updateShortcutModifierUi(data.payload?.inputBackend);
             if (data.payload && !data.payload.nativeInputReady) {
               setStatus('connected', 'Input offline');
             }
@@ -1507,13 +1513,21 @@
       ctrlBtn.setAttribute('aria-pressed', ctrlArmed ? 'true' : 'false');
     }
 
+    function updateShortcutModifierUi(inputBackend) {
+      const isMac = typeof inputBackend === 'string' && inputBackend.startsWith('macos-');
+      shortcutModifier = isMac ? 'command' : 'ctrl';
+      ctrlBtn.textContent = isMac ? '⌘' : 'Ctrl';
+      ctrlBtn.setAttribute('aria-label', isMac ? 'Command' : 'Control');
+      ctrlBtn.title = isMac ? 'Command shortcuts' : 'Control shortcuts';
+    }
+
     function consumeCtrlShortcut(text) {
       if (!ctrlArmed || !text || text.length !== 1) return false;
 
       const key = text.toLowerCase();
       if (!['z', 'c', 'v'].includes(key)) return false;
 
-      send({ type: 'keytap', key, modifiers: ['ctrl'] });
+      send({ type: 'keytap', key, modifiers: [shortcutModifier] });
       setCtrlArmed(false);
       return true;
     }
@@ -1885,9 +1899,6 @@
     scrollZone.addEventListener('pointercancel', releaseScroll);
 
     let lastVolumeSent = 0.5;
-    let lastVolumeX = 0;
-    let pendingVolumeDelta = 0;
-
     function renderVolume(value) {
       const percent = Math.round(value * 100);
       volumeValue.textContent = `${percent}%`;
@@ -1905,15 +1916,25 @@
       lastVolumeSent = clamped;
     }
 
-    function adjustVolumeFromDrag(event) {
-      const dx = event.clientX - lastVolumeX;
-      lastVolumeX = event.clientX;
-      pendingVolumeDelta += dx * VOLUME_DRAG_SENSITIVITY;
+    function setVolumeFromPointer(event) {
+      const rect = volumeSlider.getBoundingClientRect();
+      if (!rect.width) return;
 
-      if (Math.abs(pendingVolumeDelta) >= VOLUME_DRAG_THRESHOLD) {
-        setVolumeValue(lastVolumeSent + pendingVolumeDelta);
-        pendingVolumeDelta = 0;
-      }
+      const ratio = (event.clientX - rect.left) / rect.width;
+      setVolumeValue(ratio);
+    }
+
+    let volumeStartX = 0;
+    let volumeStartValue = 0.5;
+    let volumeDidDrag = false;
+
+    function adjustVolumeFromPointerDrag(event) {
+      const rect = volumeSlider.getBoundingClientRect();
+      if (!rect.width) return;
+
+      const deltaRatio = (event.clientX - volumeStartX) / rect.width;
+      volumeDidDrag = true;
+      setVolumeValue(volumeStartValue + deltaRatio);
     }
 
     let volumePointerId = null;
@@ -1921,8 +1942,9 @@
     volumeZone.addEventListener('pointerdown', (event) => {
       event.preventDefault();
       volumePointerId = event.pointerId;
-      lastVolumeX = event.clientX;
-      pendingVolumeDelta = 0;
+      volumeStartX = event.clientX;
+      volumeStartValue = lastVolumeSent;
+      volumeDidDrag = false;
       volumeZone.setPointerCapture(event.pointerId);
       activate(volumeZone, true);
     });
@@ -1930,17 +1952,16 @@
     volumeZone.addEventListener('pointermove', (event) => {
       if (event.pointerId !== volumePointerId) return;
       event.preventDefault();
-      adjustVolumeFromDrag(event);
+      adjustVolumeFromPointerDrag(event);
     });
 
     function releaseVolume(event) {
       if (event.pointerId !== volumePointerId) return;
       event.preventDefault();
-      if (Math.abs(pendingVolumeDelta) > 0) {
-        setVolumeValue(lastVolumeSent + pendingVolumeDelta);
+      if (!volumeDidDrag) {
+        setVolumeFromPointer(event);
       }
       volumePointerId = null;
-      pendingVolumeDelta = 0;
       activate(volumeZone, false);
     }
 
