@@ -74,7 +74,9 @@ async function buildConnectionHtml() {
   const qrDataUrl = await buildQrDataUrl(primaryUrl);
   const nativeState = serverInfo?.nativeInputReady
     ? 'Ready'
-    : 'Input not ready';
+    : serverInfo?.permissionMissing
+      ? 'Permissions Missing'
+      : 'Input not ready';
 
   return `<!doctype html>
   <html>
@@ -168,25 +170,32 @@ function showConnectionWindow() {
 
 function closeConnectionWindow() {
   if (statusWindow && !statusWindow.isDestroyed()) {
-    statusWindow.close();
+    // Hide the window immediately to improve perceived responsiveness
+    statusWindow.hide();
+    
+    // Defer the actual close operation to avoid blocking the event loop
+    // or causing macOS WindowServer hangs when the only window of a dock-hidden app closes.
+    setTimeout(() => {
+      if (statusWindow && !statusWindow.isDestroyed()) {
+        statusWindow.close();
+      }
+    }, 150);
   }
 }
 
 function createTrayIcon() {
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) {
+    return nativeImage.createEmpty();
+  }
+
   if (process.platform === 'darwin') {
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-        <rect x="4" y="4" width="10" height="10" rx="3" ry="3" fill="none" stroke="#000" stroke-width="2"/>
-      </svg>
-    `;
-    const icon = nativeImage.createFromBuffer(Buffer.from(svg));
-    const sized = icon.resize({ width: 18, height: 18 });
+    const sized = icon.resize({ width: 22, height: 22 });
     sized.setTemplateImage(true);
     return sized;
   }
 
-  const icon = nativeImage.createFromPath(iconPath);
-  return icon.isEmpty() ? nativeImage.createEmpty() : icon;
+  return icon;
 }
 
 function getAvailableDisplays() {
@@ -306,7 +315,10 @@ if (!gotTheLock) {
         captureScreen: captureAllScreens,
         getDisplays: getAvailableDisplays,
         onClientConnected: () => {
-          closeConnectionWindow();
+          // ensure we close the window on the main thread
+          setImmediate(() => {
+            closeConnectionWindow();
+          });
         },
       });
     } catch (error) {

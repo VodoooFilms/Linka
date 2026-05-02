@@ -48,7 +48,6 @@
     },
     "afterPack": "scripts/after-pack.cjs",
     "files": [
-      "build/icon.ico",
       "build/linka-icon.ico",
       "build/linka.icns",
       "build/linka-logo.png",

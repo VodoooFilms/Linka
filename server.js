@@ -253,6 +253,8 @@ export async function startServer(options = {}) {
         payload: {
           inputBackend: input.name,
           nativeInputReady: input.ready,
+          permissionMissing: state.permissionMissing,
+          message: state.message
         },
       });
     },
@@ -395,6 +397,8 @@ export async function startServer(options = {}) {
       candidates: connectionInfo.candidates,
       inputBackend: input.name,
       nativeInputReady: input.ready,
+      permissionMissing: input.permissionMissing || false,
+      message: input.message || '',
       clients: clients.size,
     });
   });
@@ -437,7 +441,7 @@ export async function startServer(options = {}) {
       clients: clients.size,
       remoteAddress: req.socket.remoteAddress || 'unknown',
     });
-    sendJson(ws, { type: 'hello', inputBackend: input.name, nativeInputReady: input.ready });
+    sendJson(ws, { type: 'hello', inputBackend: input.name, nativeInputReady: input.ready, permissionMissing: input.permissionMissing, message: input.message });
 
     if (input.getVolumeState) {
       input.getVolumeState().then((state) => {
@@ -472,6 +476,11 @@ export async function startServer(options = {}) {
         ws._messageTimestamps.push(now);
 
         const data = JSON.parse(message.toString());
+        
+        if (data.type === 'ping') {
+          return sendJson(ws, { type: 'pong' });
+        }
+
         if (!(await handleBridgeEvent(ws, data))) {
           handleCommand(input, data);
         }

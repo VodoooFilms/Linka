@@ -1101,6 +1101,8 @@
     let reconnectDelay = 650;
     let reconnectAttempt = 0;
     let isConnected = false;
+    let lastPongReceived = Date.now();
+    let heartbeatInterval = null;
     let keyboardOpen = false;
     let ctrlArmed = false;
     let shortcutModifier = 'ctrl';
@@ -1123,6 +1125,15 @@
 
     function connect() {
       clearTimeout(reconnectTimer);
+      if (socket) {
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+        socket.onopen = null;
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        }
+      }
       reconnectAttempt++;
       const statusLabel = reconnectAttempt > 1
         ? `Reconnecting ${reconnectAttempt}`
@@ -1136,16 +1147,32 @@
         isConnected = true;
         reconnectDelay = 650;
         reconnectAttempt = 0;
+        lastPongReceived = Date.now();
         clearClientError();
         setStatus('connected', 'Connected');
         requestWakeLock();
         if (bridgeOpen) {
           requestBridgeSync();
         }
+
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        heartbeatInterval = setInterval(() => {
+          if (!isConnected || !socket || socket.readyState !== WebSocket.OPEN) return;
+          
+          if (Date.now() - lastPongReceived > 6000) {
+            console.warn('[ws] Heartbeat timeout, forcing reconnect');
+            socket.onclose = null;
+            socket.close();
+            connect();
+          } else {
+            send({ type: 'ping' });
+          }
+        }, 3000);
       };
 
       socket.onclose = () => {
         isConnected = false;
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
         releaseWakeLock();
         setStatus('disconnected', `Offline · Retry in ${Math.round(reconnectDelay / 1000)}s`);
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
@@ -1162,7 +1189,12 @@
           if (data.type === 'hello') {
             updateShortcutModifierUi(data.inputBackend);
             if (!data.nativeInputReady) {
-              setStatus('connected', 'Test mode');
+              if (data.permissionMissing) {
+                setStatus('disconnected', 'Permission Needed');
+                showClientError('macOS Accessibility Permission is missing! Enable it in System Settings > Privacy & Security > Accessibility for the mouse to work.');
+              } else {
+                setStatus('connected', 'Test mode');
+              }
             }
           } else if (data.event === 'volume_state') {
             if (data.payload && typeof data.payload.volume === 'number') {
@@ -1172,8 +1204,18 @@
           } else if (data.event === 'system_state') {
             updateShortcutModifierUi(data.payload?.inputBackend);
             if (data.payload && !data.payload.nativeInputReady) {
-              setStatus('connected', 'Input offline');
+              if (data.payload.permissionMissing) {
+                setStatus('disconnected', 'Permission Needed');
+                showClientError('macOS Accessibility Permission is missing! Enable it in System Settings > Privacy & Security > Accessibility for the mouse to work.');
+              } else {
+                setStatus('connected', 'Input offline');
+              }
+            } else if (data.payload && data.payload.nativeInputReady) {
+              setStatus('connected', 'Connected');
+              clearClientError();
             }
+          } else if (data.type === 'pong') {
+            lastPongReceived = Date.now();
           } else if (data.event) {
             handleBridgeSocketMessage(data);
           }
@@ -2061,9 +2103,28 @@
       }
     }
 
+    let hiddenAt = 0;
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && isConnected) {
-        requestWakeLock();
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        if (isConnected) {
+          requestWakeLock();
+        }
+        const timeHidden = hiddenAt > 0 ? Date.now() - hiddenAt : 0;
+        const socketIsDead = !socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING;
+        
+        if (socketIsDead || timeHidden > 3000) {
+          console.log(`[ws] Forcing reconnect. Dead: ${socketIsDead}, Time hidden: ${timeHidden}ms`);
+          connect();
+        }
+        hiddenAt = 0;
+      }
+    });
+
+    window.addEventListener('online', () => {
+      if (!socket || socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
+        connect();
       }
     });
   </script>

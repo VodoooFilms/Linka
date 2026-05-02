@@ -56,8 +56,9 @@ function tryBuildHelper() {
 
   try {
     fs.chmodSync(helperPath, 0o755);
+    spawnSync('codesign', ['-s', '-', '-f', helperPath]);
   } catch (_error) {
-    // Ignore chmod failures and rely on the existing file mode when possible.
+    // Ignore chmod/codesign failures
   }
 
   return fs.existsSync(helperPath);
@@ -112,10 +113,11 @@ export function createMacOSInputAdapter(onStateChange) {
       send({ type: 'click', button, double: Boolean(double) });
     },
     scroll(dy) {
-      send({ type: 'scroll', dy: clampNumber(dy, -1200, 1200) });
+      send({ type: 'scroll', dy: clampNumber(dy * 4, -4800, 4800) });
     },
     zoom(direction = 'in') {
-      console.warn(`[input:macos] Zoom is not implemented yet: ${direction}`);
+      const key = direction === 'in' ? '=' : '-';
+      send({ type: 'keytap', key, modifiers: ['command'] });
     },
     type(text = '') {
       if (text) send({ type: 'type', text: String(text) });
@@ -203,18 +205,22 @@ export function createMacOSInputAdapter(onStateChange) {
         ? 'macOS native input is ready.'
         : 'Accessibility permission is required.';
 
+    adapter.message = stateMessage;
+
     if (permissionGranted) {
       adapter.name = 'macos-quartz';
+      adapter.permissionMissing = false;
       onStateChange?.({ name: adapter.name, ready: true, recovered: true });
       return;
     }
 
     adapter.name = 'macos-quartz (permission required)';
+    adapter.permissionMissing = response.permission === 'accessibility';
     onStateChange?.({
       name: adapter.name,
       ready: false,
-      permissionMissing: response.permission === 'accessibility',
-      message: stateMessage,
+      permissionMissing: adapter.permissionMissing,
+      message: adapter.message,
     });
   }
 

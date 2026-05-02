@@ -172,8 +172,12 @@ private func writeMuted(_ deviceID: AudioDeviceID, muted: Bool) throws {
     }
 }
 
-private func isAccessibilityTrusted() -> Bool {
-    AXIsProcessTrusted()
+private func isAccessibilityTrusted(prompt: Bool = false) -> Bool {
+    if prompt {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+    return AXIsProcessTrusted()
 }
 
 private func requireAccessibility() throws {
@@ -183,7 +187,7 @@ private func requireAccessibility() throws {
 }
 
 private func emitStatus() {
-    let trusted = isAccessibilityTrusted()
+    let trusted = isAccessibilityTrusted(prompt: true)
     writeJson([
         "type": "status",
         "ready": trusted,
@@ -260,7 +264,6 @@ private func clampCursorPoint(_ point: CGPoint) -> CGPoint {
 }
 
 private func postMouseMove(dx: Int, dy: Int) throws {
-    try requireAccessibility()
     var point = currentCursorPosition()
     point.x += CGFloat(dx)
     point.y += CGFloat(dy)
@@ -381,6 +384,8 @@ private func keyCode(for key: String) -> CGKeyCode? {
     case "shift": return 0x38
     case "option", "alt": return 0x3A
     case "control", "ctrl": return 0x3B
+    case "=": return 0x18
+    case "-": return 0x1B
     default: return nil
     }
 }

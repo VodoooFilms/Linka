@@ -17,6 +17,7 @@ build/*
 !build/icon.ico
 !build/installer.nsh
 !build/linka-icon.ico
+!build/linka.icns
 !build/linka-logo.png
 
 # Logs
