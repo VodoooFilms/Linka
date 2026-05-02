@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>LINKA</title>
+  <link rel="icon" href="/favicon.ico?v=linka-1" sizes="any">
+  <link rel="shortcut icon" href="/favicon.ico?v=linka-1">
+  <link rel="icon" type="image/png" href="/icon.png?v=linka-1">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=linka-1">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#080a0c">
@@ -72,7 +76,7 @@
       z-index: 5;
       min-height: 52px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       gap: 8px;
       padding: 8px 10px;
@@ -152,7 +156,6 @@
     .keyboard-button,
     .key-button,
     .mute-button,
-    .session-button,
     .fullscreen-button {
       height: 36px;
       border: 1px solid var(--line);
@@ -175,15 +178,9 @@
     }
 
     .top-button,
-    .session-button,
     .fullscreen-button {
       width: 100%;
       min-width: 0;
-    }
-
-    .session-button {
-      padding: 0 10px;
-      color: #ffb1c4;
     }
 
     .fullscreen-button {
@@ -326,7 +323,7 @@
 
     .connect-actions {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
       gap: 10px;
       margin-top: 16px;
     }
@@ -342,12 +339,6 @@
       font-weight: 800;
       letter-spacing: 0.04em;
       text-transform: uppercase;
-    }
-
-    .connect-action.warn {
-      color: #ffb1c4;
-      border-color: rgba(255, 66, 111, 0.35);
-      background: rgba(255, 66, 111, 0.1);
     }
 
     .app.bridge-open {
@@ -1023,7 +1014,6 @@
         <button id="muteBtn" class="mute-button top-button" type="button">Mute</button>
         <button id="bridgeBtn" class="key-button top-button" type="button">Bridge</button>
       </div>
-      <button id="forgetBtn" class="session-button" type="button" title="Disconnect and forget this device">Forget</button>
       <button id="fullscreenBtn" class="fullscreen-button" type="button" aria-label="Toggle full screen" title="Full screen">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -1048,7 +1038,6 @@
         <p id="connectMessage">Trying to restore the last paired desktop session.</p>
         <div class="connect-actions">
           <button id="retryConnectBtn" class="connect-action" type="button">Retry</button>
-          <button id="forgetConnectBtn" class="connect-action warn" type="button">Forget Device</button>
         </div>
       </div>
     </section>
@@ -1147,7 +1136,6 @@
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('statusText');
     const keyboardBtn = document.getElementById('keyboardBtn');
-    const forgetBtn = document.getElementById('forgetBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const keyboardTools = document.getElementById('keyboardTools');
     const keyboardInput = document.getElementById('keyboardInput');
@@ -1156,7 +1144,6 @@
     const connectTitle = document.getElementById('connectTitle');
     const connectMessage = document.getElementById('connectMessage');
     const retryConnectBtn = document.getElementById('retryConnectBtn');
-    const forgetConnectBtn = document.getElementById('forgetConnectBtn');
     const bridgeBtn = document.getElementById('bridgeBtn');
     const bridgePanel = document.getElementById('bridgePanel');
     const bridgeBackBtn = document.getElementById('bridgeBackBtn');
@@ -1326,7 +1313,6 @@
         reconnectToken,
       });
       clearPairingParamsFromUrl();
-      forgetBtn.hidden = false;
     }
 
     function forgetCurrentDevice(options = {}) {
@@ -1840,16 +1826,6 @@
       reconnectDelay = 650;
       reconnectAttempt = 0;
       connect();
-    });
-
-    forgetBtn.addEventListener('click', (event) => {
-      event.preventDefault();
-      forgetCurrentDevice({ manual: true });
-    });
-
-    forgetConnectBtn.addEventListener('click', (event) => {
-      event.preventDefault();
-      forgetCurrentDevice({ manual: true });
     });
 
     connect();

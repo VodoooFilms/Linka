@@ -17,6 +17,8 @@ const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
 const WS_MAX_MSG_PER_SEC = 200;
 const RECONNECT_TOKEN_BYTES = 32;
 const MAX_RECONNECT_TOKENS = 24;
+const FAVICON_PATH = path.join(__dirname, 'build', 'linka-icon.ico');
+const WEB_ICON_PATH = path.join(__dirname, 'build', 'linka-logo.png');
 let loggingReady = false;
 let bridgeMessages = [];
 
@@ -574,6 +576,18 @@ export async function startServer(options = {}) {
   });
   app.use(logRequest);
   app.use(preventBrowserCache);
+
+  app.get('/favicon.ico', (_req, res) => {
+    res.sendFile(FAVICON_PATH);
+  });
+
+  app.get('/icon.png', (_req, res) => {
+    res.sendFile(WEB_ICON_PATH);
+  });
+
+  app.get('/apple-touch-icon.png', (_req, res) => {
+    res.sendFile(WEB_ICON_PATH);
+  });
 
   app.get('/api/status', (_req, res) => {
     res.json({
