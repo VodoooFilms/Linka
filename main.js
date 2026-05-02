@@ -44,6 +44,15 @@ function getPrimaryLanUrl() {
   return serverInfo?.primaryUrl || serverInfo?.urls?.find((url) => !url.includes('localhost')) || serverInfo?.urls?.[0] || `http://localhost:${PORT}`;
 }
 
+function getPairingUrl() {
+  return serverInfo?.pairingUrl || getPrimaryLanUrl();
+}
+
+function syncSessionInfo(nextSessionInfo) {
+  if (!serverInfo || !nextSessionInfo) return;
+  Object.assign(serverInfo, nextSessionInfo);
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -71,7 +80,8 @@ async function buildQrDataUrl(value) {
 
 async function buildConnectionHtml() {
   const primaryUrl = getPrimaryLanUrl();
-  const qrDataUrl = await buildQrDataUrl(primaryUrl);
+  const pairingUrl = getPairingUrl();
+  const qrDataUrl = await buildQrDataUrl(pairingUrl);
   const nativeState = serverInfo?.nativeInputReady
     ? 'Ready'
     : serverInfo?.permissionMissing
@@ -134,6 +144,7 @@ async function buildConnectionHtml() {
         <h1>${APP_NAME}</h1>
         <img src="${escapeHtml(qrDataUrl)}" alt="QR code for ${escapeHtml(primaryUrl)}">
         <p>Scan with your phone camera.</p>
+        <p>${escapeHtml(getHostFromUrl(primaryUrl))}</p>
         <div class="status">${nativeState}</div>
       </main>
     </body>
@@ -263,6 +274,7 @@ function configureAutoStart() {
 
 function rebuildTray() {
   const primaryUrl = getPrimaryLanUrl();
+  const pairingUrl = getPairingUrl();
   const nativeLabel = serverInfo?.nativeInputReady
     ? `Input: ${serverInfo.inputBackend}`
     : `Input: ${serverInfo?.inputBackend || 'not ready'}`;
@@ -273,11 +285,23 @@ function rebuildTray() {
     { label: `Phone URL: ${primaryUrl}`, enabled: false },
     { type: 'separator' },
     { label: 'Show Connection Info', click: showConnectionWindow },
-    { label: 'Open Controller on This PC', click: () => shell.openExternal(primaryUrl) },
+    { label: 'Open Controller on This PC', click: () => shell.openExternal(pairingUrl) },
     {
       label: 'Copy Phone URL',
       click: () => {
-        clipboard.writeText(primaryUrl);
+        clipboard.writeText(pairingUrl);
+      },
+    },
+    {
+      label: 'Reset Pairing',
+      click: async () => {
+        const nextSession = serverInfo?.resetPairing?.();
+        syncSessionInfo(nextSession);
+        rebuildTray();
+        if (statusWindow && !statusWindow.isDestroyed()) {
+          const html = await buildConnectionHtml();
+          statusWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+        }
       },
     },
     { type: 'separator' },

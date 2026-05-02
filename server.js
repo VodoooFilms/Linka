@@ -1,7 +1,7 @@
 import express from 'express';
 import { createServer as createHttpServer } from 'http';
 import { WebSocketServer } from 'ws';
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -15,8 +15,35 @@ const MAX_BRIDGE_MESSAGES = 30;
 const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
 const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
 const WS_MAX_MSG_PER_SEC = 200;
+const RECONNECT_TOKEN_BYTES = 32;
+const MAX_RECONNECT_TOKENS = 24;
 let loggingReady = false;
 let bridgeMessages = [];
+
+function createSessionId() {
+  return randomUUID();
+}
+
+function createSecretToken() {
+  return randomBytes(RECONNECT_TOKEN_BYTES).toString('base64url');
+}
+
+function tokenMatches(actual, provided) {
+  if (typeof actual !== 'string' || typeof provided !== 'string') return false;
+
+  const actualBuffer = Buffer.from(actual);
+  const providedBuffer = Buffer.from(provided);
+  if (actualBuffer.length !== providedBuffer.length) return false;
+
+  return timingSafeEqual(actualBuffer, providedBuffer);
+}
+
+function withPairingParams(baseUrl, sessionId, pairingToken) {
+  const url = new URL(baseUrl);
+  url.searchParams.set('sessionId', sessionId);
+  url.searchParams.set('pairingToken', pairingToken);
+  return url.toString();
+}
 
 function getBridgeContentBytes(content) {
   if (typeof content !== 'string') return 0;
@@ -234,9 +261,50 @@ export async function startServer(options = {}) {
   const wss = new WebSocketServer({ server, maxPayload: WS_MAX_PAYLOAD_BYTES });
   const clients = new Set();
   const connectionInfo = getConnectionInfo(port);
+  let activeSessionId = createSessionId();
+  let activePairingToken = createSecretToken();
+  let reconnectTokens = new Map();
   const HEARTBEAT_INTERVAL_MS = 30000;
   const HEARTBEAT_TIMEOUT_MS = 10000;
   let heartbeatTimer = null;
+
+  function getSessionSnapshot() {
+    return {
+      sessionId: activeSessionId,
+      pairingUrl: withPairingParams(connectionInfo.primaryUrl, activeSessionId, activePairingToken),
+      localhostPairingUrl: withPairingParams(connectionInfo.localhostUrl, activeSessionId, activePairingToken),
+    };
+  }
+
+  function pruneReconnectTokens() {
+    if (reconnectTokens.size <= MAX_RECONNECT_TOKENS) {
+      return;
+    }
+
+    const ordered = [...reconnectTokens.entries()]
+      .sort((a, b) => (a[1].lastSeenAt || a[1].createdAt) - (b[1].lastSeenAt || b[1].createdAt));
+
+    for (const [token] of ordered.slice(0, reconnectTokens.size - MAX_RECONNECT_TOKENS)) {
+      reconnectTokens.delete(token);
+    }
+  }
+
+  function issueReconnectToken(meta = {}) {
+    const token = createSecretToken();
+    reconnectTokens.set(token, {
+      createdAt: Date.now(),
+      lastSeenAt: Date.now(),
+      ...meta,
+    });
+    pruneReconnectTokens();
+    return token;
+  }
+
+  function invalidateReconnectToken(token) {
+    if (typeof token === 'string' && token) {
+      reconnectTokens.delete(token);
+    }
+  }
 
   const input = await createInputAdapter({
     onStateChange: (state) => {
@@ -268,8 +336,42 @@ export async function startServer(options = {}) {
 
   function broadcast(data) {
     for (const client of clients) {
+      if (!client._authenticated) continue;
       sendJson(client, data);
     }
+  }
+
+  function clearSocketAuth(ws) {
+    if (!ws) return;
+    ws._authenticated = false;
+    ws._sessionId = null;
+    ws._reconnectToken = null;
+  }
+
+  function closeAllClients(code = 4001, reason = 'Pairing reset') {
+    for (const client of clients) {
+      clearTimeout(client._heartbeatTimeout);
+      clearSocketAuth(client);
+      client.close(code, reason);
+    }
+  }
+
+  function resetPairing() {
+    activeSessionId = createSessionId();
+    activePairingToken = createSecretToken();
+    reconnectTokens = new Map();
+
+    broadcast({
+      event: 'session_reset',
+      payload: {
+        message: 'Pairing was reset on the desktop app.',
+      },
+    });
+    closeAllClients(4001, 'Pairing reset');
+
+    const session = getSessionSnapshot();
+    console.log(`[session] Pairing reset. Session ${session.sessionId}`);
+    return session;
   }
 
   function syncBridge(ws) {
@@ -286,6 +388,94 @@ export async function startServer(options = {}) {
     if (bridgeMessages.length > MAX_BRIDGE_MESSAGES) {
       bridgeMessages = bridgeMessages.slice(-MAX_BRIDGE_MESSAGES);
     }
+  }
+
+  function authenticateSocket(ws, authMode) {
+    ws._authenticated = true;
+    ws._sessionId = activeSessionId;
+    ws._authMode = authMode;
+  }
+
+  function createAuthSuccessPayload(ws, meta = {}) {
+    const reconnectToken = issueReconnectToken(meta);
+    ws._reconnectToken = reconnectToken;
+
+    return {
+      type: 'auth_ok',
+      sessionId: activeSessionId,
+      reconnectToken,
+    };
+  }
+
+  function handleAuthMessage(ws, data, req) {
+    const providedSessionId = typeof data.sessionId === 'string' ? data.sessionId : '';
+    const providedToken = typeof data.token === 'string' ? data.token : '';
+    const authMode = data.mode === 'reconnect' ? 'reconnect' : data.mode === 'pair' ? 'pair' : null;
+
+    if (!authMode) {
+      sendJson(ws, { type: 'auth_error', reason: 'invalid_mode' });
+      return false;
+    }
+
+    if (!tokenMatches(activeSessionId, providedSessionId)) {
+      sendJson(ws, { type: 'auth_error', reason: 'session_changed' });
+      return false;
+    }
+
+    if (authMode === 'pair') {
+      if (!tokenMatches(activePairingToken, providedToken)) {
+        sendJson(ws, { type: 'auth_error', reason: 'invalid_pairing' });
+        return false;
+      }
+
+      clearSocketAuth(ws);
+      authenticateSocket(ws, authMode);
+      sendJson(ws, createAuthSuccessPayload(ws, {
+        mode: authMode,
+        remoteAddress: req.socket.remoteAddress || 'unknown',
+      }));
+      if (input.getVolumeState) {
+        input.getVolumeState().then((state) => {
+          if (state && ws.readyState === 1 && ws._authenticated) {
+            sendJson(ws, { event: 'volume_state', payload: state });
+          }
+        }).catch(() => {});
+      }
+      onClientConnected?.({
+        clients: clients.size,
+        remoteAddress: req.socket.remoteAddress || 'unknown',
+        authMode,
+      });
+      return true;
+    }
+
+    const existing = reconnectTokens.get(providedToken);
+    if (!existing) {
+      sendJson(ws, { type: 'auth_error', reason: 'invalid_reconnect' });
+      return false;
+    }
+
+    reconnectTokens.delete(providedToken);
+    clearSocketAuth(ws);
+    authenticateSocket(ws, authMode);
+    sendJson(ws, createAuthSuccessPayload(ws, {
+      mode: authMode,
+      remoteAddress: req.socket.remoteAddress || 'unknown',
+      previousIssuedAt: existing.createdAt,
+    }));
+    if (input.getVolumeState) {
+      input.getVolumeState().then((state) => {
+        if (state && ws.readyState === 1 && ws._authenticated) {
+          sendJson(ws, { event: 'volume_state', payload: state });
+        }
+      }).catch(() => {});
+    }
+    onClientConnected?.({
+      clients: clients.size,
+      remoteAddress: req.socket.remoteAddress || 'unknown',
+      authMode,
+    });
+    return true;
   }
 
   async function handleBridgeEvent(ws, data) {
@@ -389,6 +579,7 @@ export async function startServer(options = {}) {
     res.json({
       product: 'LINKA',
       status: 'running',
+      sessionId: activeSessionId,
       port,
       bindHost: connectionInfo.bindHost,
       primaryUrl: connectionInfo.primaryUrl,
@@ -437,19 +628,17 @@ export async function startServer(options = {}) {
   wss.on('connection', (ws, req) => {
     clients.add(ws);
     console.log(`[ws] Client connected from ${req.socket.remoteAddress}. Total clients: ${clients.size}`);
-    onClientConnected?.({
-      clients: clients.size,
-      remoteAddress: req.socket.remoteAddress || 'unknown',
+    ws._authenticated = false;
+    ws._sessionId = null;
+    ws._reconnectToken = null;
+    sendJson(ws, {
+      type: 'hello',
+      authRequired: true,
+      inputBackend: input.name,
+      nativeInputReady: input.ready,
+      permissionMissing: input.permissionMissing,
+      message: input.message,
     });
-    sendJson(ws, { type: 'hello', inputBackend: input.name, nativeInputReady: input.ready, permissionMissing: input.permissionMissing, message: input.message });
-
-    if (input.getVolumeState) {
-      input.getVolumeState().then((state) => {
-        if (state) {
-          sendJson(ws, { event: 'volume_state', payload: state });
-        }
-      });
-    }
 
     ws._messageTimestamps = [];
     ws._rateLimited = false;
@@ -476,9 +665,24 @@ export async function startServer(options = {}) {
         ws._messageTimestamps.push(now);
 
         const data = JSON.parse(message.toString());
-        
+
         if (data.type === 'ping') {
           return sendJson(ws, { type: 'pong' });
+        }
+
+        if (data.type === 'auth') {
+          const ok = handleAuthMessage(ws, data, req);
+          if (!ok) {
+            clearSocketAuth(ws);
+            ws.close(4401, 'Authentication failed');
+          }
+          return;
+        }
+
+        if (!ws._authenticated) {
+          sendJson(ws, { type: 'auth_error', reason: 'auth_required' });
+          ws.close(4401, 'Authentication required');
+          return;
         }
 
         if (!(await handleBridgeEvent(ws, data))) {
@@ -491,6 +695,7 @@ export async function startServer(options = {}) {
 
     ws.on('close', () => {
       clearTimeout(ws._heartbeatTimeout);
+       clearSocketAuth(ws);
       clients.delete(ws);
       console.log(`[ws] Client disconnected. Total clients: ${clients.size}`);
     });
@@ -526,6 +731,7 @@ export async function startServer(options = {}) {
 
   console.log(`[net] Bind address: ${connectionInfo.bindHost}:${port}`);
   console.log(`[net] Recommended phone URL: ${connectionInfo.primaryUrl}`);
+  console.log(`[net] Pairing URL: ${getSessionSnapshot().pairingUrl}`);
   console.log(`[net] Localhost URL: ${connectionInfo.localhostUrl}`);
   console.log(`[net] Candidates: ${connectionInfo.candidates.map((candidate) => `${candidate.url} (${candidate.name}, score=${candidate.score}${candidate.likelyVirtual ? ', virtual/link-local' : ''})`).join(' | ') || 'none'}`);
   console.log(`Input backend: ${input.name}${input.ready ? '' : ' (not controlling native input)'}`);
@@ -535,14 +741,20 @@ export async function startServer(options = {}) {
     bindHost: connectionInfo.bindHost,
     primaryUrl: connectionInfo.primaryUrl,
     localhostUrl: connectionInfo.localhostUrl,
+    ...getSessionSnapshot(),
     urls: connectionInfo.urls,
     candidates: connectionInfo.candidates,
     inputBackend: input.name,
     nativeInputReady: input.ready,
+    resetPairing: () => {
+      const session = resetPairing();
+      return session;
+    },
     close: async () => {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       for (const client of clients) {
         clearTimeout(client._heartbeatTimeout);
+        clearSocketAuth(client);
       }
       await new Promise((resolve) => server.close(resolve));
       input.close?.();

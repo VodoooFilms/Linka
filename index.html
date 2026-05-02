@@ -72,7 +72,7 @@
       z-index: 5;
       min-height: 52px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 42px;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       align-items: center;
       gap: 8px;
       padding: 8px 10px;
@@ -152,6 +152,7 @@
     .keyboard-button,
     .key-button,
     .mute-button,
+    .session-button,
     .fullscreen-button {
       height: 36px;
       border: 1px solid var(--line);
@@ -174,9 +175,15 @@
     }
 
     .top-button,
+    .session-button,
     .fullscreen-button {
       width: 100%;
       min-width: 0;
+    }
+
+    .session-button {
+      padding: 0 10px;
+      color: #ffb1c4;
     }
 
     .fullscreen-button {
@@ -273,6 +280,74 @@
       grid-template-rows: minmax(96px, 30%) 1fr minmax(76px, 24%);
       gap: 8px;
       padding: 8px;
+    }
+
+    .connect-panel {
+      grid-row: 2;
+      display: none;
+      align-content: center;
+      justify-items: center;
+      gap: 14px;
+      padding: 24px 18px;
+      text-align: center;
+    }
+
+    .app.pairing-mode .connect-panel {
+      display: grid;
+    }
+
+    .app.pairing-mode .controller,
+    .app.pairing-mode .keyboard-tools,
+    .app.pairing-mode .bridge-panel {
+      display: none;
+    }
+
+    .connect-card {
+      width: min(100%, 420px);
+      padding: 20px 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(17, 22, 26, 0.96), rgba(8, 10, 12, 0.96));
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    .connect-card h1 {
+      margin: 0 0 10px;
+      font-size: 22px;
+      line-height: 1.05;
+    }
+
+    .connect-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .connect-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .connect-action {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .connect-action.warn {
+      color: #ffb1c4;
+      border-color: rgba(255, 66, 111, 0.35);
+      background: rgba(255, 66, 111, 0.1);
     }
 
     .app.bridge-open {
@@ -948,6 +1023,7 @@
         <button id="muteBtn" class="mute-button top-button" type="button">Mute</button>
         <button id="bridgeBtn" class="key-button top-button" type="button">Bridge</button>
       </div>
+      <button id="forgetBtn" class="session-button" type="button" title="Disconnect and forget this device">Forget</button>
       <button id="fullscreenBtn" class="fullscreen-button" type="button" aria-label="Toggle full screen" title="Full screen">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -965,6 +1041,17 @@
       <button class="key-button" type="button" data-key="tab">Tab</button>
     </div>
     <input id="keyboardInput" class="keyboard-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="text" aria-label="Native keyboard input">
+
+    <section id="connectPanel" class="connect-panel" aria-live="polite">
+      <div class="connect-card">
+        <h1 id="connectTitle">Connecting to Linka</h1>
+        <p id="connectMessage">Trying to restore the last paired desktop session.</p>
+        <div class="connect-actions">
+          <button id="retryConnectBtn" class="connect-action" type="button">Retry</button>
+          <button id="forgetConnectBtn" class="connect-action warn" type="button">Forget Device</button>
+        </div>
+      </div>
+    </section>
 
     <section class="controller">
       <div id="dragZone" class="zone drag-zone" data-control="drag">
@@ -1060,10 +1147,16 @@
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('statusText');
     const keyboardBtn = document.getElementById('keyboardBtn');
+    const forgetBtn = document.getElementById('forgetBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const keyboardTools = document.getElementById('keyboardTools');
     const keyboardInput = document.getElementById('keyboardInput');
     const ctrlBtn = document.getElementById('ctrlBtn');
+    const connectPanel = document.getElementById('connectPanel');
+    const connectTitle = document.getElementById('connectTitle');
+    const connectMessage = document.getElementById('connectMessage');
+    const retryConnectBtn = document.getElementById('retryConnectBtn');
+    const forgetConnectBtn = document.getElementById('forgetConnectBtn');
     const bridgeBtn = document.getElementById('bridgeBtn');
     const bridgePanel = document.getElementById('bridgePanel');
     const bridgeBackBtn = document.getElementById('bridgeBackBtn');
@@ -1095,14 +1188,17 @@
     const TAP_MAX_MS = 220;
     const TAP_MOVE_TOLERANCE = 7;
     const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
+    const MOBILE_SESSION_STORAGE_KEY = 'linka.mobile-session.v1';
 
     let socket;
     let reconnectTimer = 0;
     let reconnectDelay = 650;
     let reconnectAttempt = 0;
     let isConnected = false;
+    let isAuthenticated = false;
     let lastPongReceived = Date.now();
     let heartbeatInterval = null;
+    let lastServerHello = null;
     let keyboardOpen = false;
     let ctrlArmed = false;
     let shortcutModifier = 'ctrl';
@@ -1110,8 +1206,175 @@
     let bridgeCapturing = false;
     let bridgeMessages = [];
     let selectedDisplayId = null;
+    let pendingPairingParams = readPairingParamsFromUrl();
+    let manualDisconnect = false;
 
     const bridgeSource = window.matchMedia?.('(pointer: coarse)').matches ? 'phone' : 'pc';
+
+    function setPairingMode(active) {
+      appEl.classList.toggle('pairing-mode', Boolean(active));
+      connectPanel.hidden = !active;
+    }
+
+    function setConnectScreen(title, message) {
+      connectTitle.textContent = title;
+      connectMessage.textContent = message;
+    }
+
+    function parseStoredSession(rawValue) {
+      if (!rawValue) return null;
+
+      try {
+        const parsed = JSON.parse(rawValue);
+        if (
+          !parsed
+          || typeof parsed.desktopOrigin !== 'string'
+          || typeof parsed.sessionId !== 'string'
+          || typeof parsed.reconnectToken !== 'string'
+        ) {
+          return null;
+        }
+
+        return {
+          desktopOrigin: parsed.desktopOrigin,
+          host: typeof parsed.host === 'string' ? parsed.host : '',
+          port: typeof parsed.port === 'string' ? parsed.port : '',
+          sessionId: parsed.sessionId,
+          reconnectToken: parsed.reconnectToken,
+        };
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    function readStoredSession() {
+      return parseStoredSession(window.localStorage.getItem(MOBILE_SESSION_STORAGE_KEY));
+    }
+
+    function persistSession(session) {
+      if (!session) return;
+
+      const origin = new URL(session.desktopOrigin);
+      window.localStorage.setItem(MOBILE_SESSION_STORAGE_KEY, JSON.stringify({
+        desktopOrigin: origin.origin,
+        host: origin.hostname,
+        port: origin.port || (origin.protocol === 'https:' ? '443' : '80'),
+        sessionId: session.sessionId,
+        reconnectToken: session.reconnectToken,
+      }));
+    }
+
+    function clearStoredSession() {
+      window.localStorage.removeItem(MOBILE_SESSION_STORAGE_KEY);
+    }
+
+    function readPairingParamsFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const sessionId = params.get('sessionId');
+      const pairingToken = params.get('pairingToken');
+      if (!sessionId || !pairingToken) return null;
+      return { sessionId, pairingToken };
+    }
+
+    function clearPairingParamsFromUrl() {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('sessionId');
+      url.searchParams.delete('pairingToken');
+      const next = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, '', next);
+      pendingPairingParams = null;
+    }
+
+    function getStoredSessionCandidate() {
+      const stored = readStoredSession();
+      if (!stored) return null;
+
+      return {
+        mode: 'reconnect',
+        desktopOrigin: stored.desktopOrigin,
+        sessionId: stored.sessionId,
+        token: stored.reconnectToken,
+      };
+    }
+
+    function getAuthCandidate() {
+      if (pendingPairingParams) {
+        return {
+          mode: 'pair',
+          desktopOrigin: window.location.origin,
+          sessionId: pendingPairingParams.sessionId,
+          token: pendingPairingParams.pairingToken,
+        };
+      }
+
+      return getStoredSessionCandidate();
+    }
+
+    function buildSocketUrl(origin) {
+      const url = new URL(origin);
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      url.pathname = '/';
+      url.search = '';
+      url.hash = '';
+      return url.toString();
+    }
+
+    function applyAuthenticatedSession(origin, sessionId, reconnectToken) {
+      persistSession({
+        desktopOrigin: origin,
+        sessionId,
+        reconnectToken,
+      });
+      clearPairingParamsFromUrl();
+      forgetBtn.hidden = false;
+    }
+
+    function forgetCurrentDevice(options = {}) {
+      manualDisconnect = Boolean(options.manual);
+      clearTimeout(reconnectTimer);
+      clearStoredSession();
+      clearPairingParamsFromUrl();
+      isConnected = false;
+      isAuthenticated = false;
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (socket) {
+        socket.onclose = null;
+        socket.onerror = null;
+        socket.onmessage = null;
+        socket.onopen = null;
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        }
+        socket = null;
+      }
+      releaseWakeLock();
+      setStatus('disconnected', 'Scan to Connect');
+      setPairingMode(true);
+      setConnectScreen('Pair with Linka', 'Scan the QR code from the desktop app to pair this device again.');
+    }
+
+    function handleSessionInvalidation(message) {
+      forgetCurrentDevice({ manual: false });
+      showClientError(message);
+    }
+
+    function applyServerInputState(state) {
+      if (!state || !isAuthenticated) return;
+
+      updateShortcutModifierUi(state.inputBackend);
+      if (!state.nativeInputReady) {
+        if (state.permissionMissing) {
+          setStatus('disconnected', 'Permission Needed');
+          showClientError('macOS Accessibility Permission is missing! Enable it in System Settings > Privacy & Security > Accessibility for the mouse to work.');
+        } else {
+          setStatus('connected', 'Test mode');
+        }
+        return;
+      }
+
+      setStatus('connected', 'Connected');
+      clearClientError();
+    }
 
     function syncViewportHeight() {
       const height = window.visualViewport?.height || window.innerHeight;
@@ -1124,6 +1387,14 @@
     }
 
     function connect() {
+      const authCandidate = getAuthCandidate();
+      if (!authCandidate) {
+        setStatus('disconnected', 'Scan to Connect');
+        setPairingMode(true);
+        setConnectScreen('Pair with Linka', 'Scan the QR code from the Linka desktop app to connect this phone.');
+        return;
+      }
+
       clearTimeout(reconnectTimer);
       if (socket) {
         socket.onclose = null;
@@ -1139,25 +1410,26 @@
         ? `Reconnecting ${reconnectAttempt}`
         : 'Connecting';
       setStatus('connecting', statusLabel);
-
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      socket = new WebSocket(`${protocol}//${window.location.host}`);
+      setPairingMode(true);
+      setConnectScreen(
+        authCandidate.mode === 'pair' ? 'Pairing with Linka' : 'Restoring Linka Session',
+        authCandidate.mode === 'pair'
+          ? 'Authorizing this browser with the active desktop session.'
+          : 'Trying to reconnect to the last paired desktop session.',
+      );
+      manualDisconnect = false;
+      socket = new WebSocket(buildSocketUrl(authCandidate.desktopOrigin));
 
       socket.onopen = () => {
-        isConnected = true;
-        reconnectDelay = 650;
-        reconnectAttempt = 0;
+        isConnected = false;
+        isAuthenticated = false;
         lastPongReceived = Date.now();
         clearClientError();
-        setStatus('connected', 'Connected');
-        requestWakeLock();
-        if (bridgeOpen) {
-          requestBridgeSync();
-        }
+        setStatus('connecting', 'Authorizing');
 
         if (heartbeatInterval) clearInterval(heartbeatInterval);
         heartbeatInterval = setInterval(() => {
-          if (!isConnected || !socket || socket.readyState !== WebSocket.OPEN) return;
+          if (!socket || socket.readyState !== WebSocket.OPEN) return;
           
           if (Date.now() - lastPongReceived > 6000) {
             console.warn('[ws] Heartbeat timeout, forcing reconnect');
@@ -1168,12 +1440,25 @@
             send({ type: 'ping' });
           }
         }, 3000);
+
+        socket.send(JSON.stringify({
+          type: 'auth',
+          mode: authCandidate.mode,
+          sessionId: authCandidate.sessionId,
+          token: authCandidate.token,
+        }));
       };
 
       socket.onclose = () => {
         isConnected = false;
+        isAuthenticated = false;
         if (heartbeatInterval) clearInterval(heartbeatInterval);
         releaseWakeLock();
+        if (manualDisconnect || !getAuthCandidate()) {
+          return;
+        }
+        setPairingMode(true);
+        setConnectScreen('Reconnecting to Linka', `Trying again in ${Math.round(reconnectDelay / 1000)}s.`);
         setStatus('disconnected', `Offline · Retry in ${Math.round(reconnectDelay / 1000)}s`);
         reconnectTimer = window.setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 1.6, 5000);
@@ -1187,15 +1472,32 @@
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'hello') {
-            updateShortcutModifierUi(data.inputBackend);
-            if (!data.nativeInputReady) {
-              if (data.permissionMissing) {
-                setStatus('disconnected', 'Permission Needed');
-                showClientError('macOS Accessibility Permission is missing! Enable it in System Settings > Privacy & Security > Accessibility for the mouse to work.');
-              } else {
-                setStatus('connected', 'Test mode');
-              }
+            lastServerHello = data;
+            applyServerInputState(data);
+          } else if (data.type === 'auth_ok') {
+            isConnected = true;
+            isAuthenticated = true;
+            reconnectDelay = 650;
+            reconnectAttempt = 0;
+            setPairingMode(false);
+            setStatus('connected', 'Connected');
+            clearClientError();
+            requestWakeLock();
+            applyAuthenticatedSession(authCandidate.desktopOrigin, data.sessionId, data.reconnectToken);
+            applyServerInputState(lastServerHello);
+            if (bridgeOpen) {
+              requestBridgeSync();
             }
+          } else if (data.type === 'auth_error') {
+            const reason = data.reason || 'unknown';
+            if (reason === 'session_changed' || reason === 'invalid_reconnect' || reason === 'invalid_pairing') {
+              handleSessionInvalidation('Desktop session changed or pairing expired. Scan the QR code again.');
+            } else if (reason === 'auth_required') {
+              handleSessionInvalidation('Authentication is required. Scan the QR code again.');
+            } else {
+              showClientError(`Authentication failed: ${reason}`);
+            }
+            socket.close();
           } else if (data.event === 'volume_state') {
             if (data.payload && typeof data.payload.volume === 'number') {
               lastVolumeSent = data.payload.volume;
@@ -1214,6 +1516,9 @@
               setStatus('connected', 'Connected');
               clearClientError();
             }
+          } else if (data.event === 'session_reset') {
+            handleSessionInvalidation(data.payload?.message || 'Pairing was reset on the desktop app.');
+            socket.close();
           } else if (data.type === 'pong') {
             lastPongReceived = Date.now();
           } else if (data.event) {
@@ -1530,6 +1835,22 @@
     window.addEventListener('resize', syncViewportHeight);
     window.visualViewport?.addEventListener('resize', syncViewportHeight);
     window.visualViewport?.addEventListener('scroll', syncViewportHeight);
+
+    retryConnectBtn.addEventListener('click', () => {
+      reconnectDelay = 650;
+      reconnectAttempt = 0;
+      connect();
+    });
+
+    forgetBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      forgetCurrentDevice({ manual: true });
+    });
+
+    forgetConnectBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      forgetCurrentDevice({ manual: true });
+    });
 
     connect();
 

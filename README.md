@@ -40,6 +40,7 @@ Linka has two local modes:
 - **QR code generated locally** — no external API calls, your LAN IP never leaves the PC.
 - **Screen wake lock** — phone screen stays on while connected.
 - **Auto-recovery**: the native input helper respawns automatically if it crashes.
+- **Reconnect persistence**: once paired, the mobile client can automatically rejoin the current desktop session after a refresh or browser reopen.
 - Native input backends for Windows and macOS.
 - Portable Windows Electron build with a bundled native input helper.
 
@@ -55,9 +56,10 @@ Linka has two local modes:
 - WebSocket rate limiting (200 msg/s per client).
 - WebSocket message size limit (8 MB) and Bridge file size limit (5 MB decoded).
 - WebSocket heartbeat (30 s) detects and terminates stale connections.
+- Pairing and reconnect tokens are scoped to the current desktop app session and are validated before control commands are accepted.
 - Clipboard fallback for non-HTTPS contexts.
 - Electron context isolation enabled; node integration disabled in renderer.
-- No authentication — designed for trusted local networks only. Do not expose to public or untrusted networks.
+- Linka is still designed for trusted local networks only. Do not expose it to public or untrusted networks.
 
 ### macOS Distribution Notes
 
@@ -141,6 +143,8 @@ npm run build:native:mac
 - Use Bridge to switch into a clean transfer panel for sending text snippets and images between phone and PC.
 - Tap Capture in Bridge to screenshot the PC screen.
 - Use Copy on text items and Download on image items. Bridge data is RAM-only and disappears when the app/server restarts.
+- Use `Forget` on mobile to clear the saved session from that browser.
+- Use `Reset Pairing` in the desktop tray/menu bar to invalidate all current mobile reconnect tokens and force a fresh scan.
 
 The local status endpoint is available at:
 
