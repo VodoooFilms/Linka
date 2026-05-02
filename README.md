@@ -7,8 +7,11 @@ Linka turns a phone browser into a local remote controller and transfer bridge f
 It exists for couch, TV, projector, and desk setups where reaching for a physical mouse, keyboard, or quick transfer tool is inconvenient. The desktop app starts a local server, shows a QR code, and keeps the controller available from the desktop tray or menu bar.
 
 macOS note:
-Linka's native input adapter on macOS requires Accessibility permission for the app or terminal that launches Linka.
-Enable it in `System Settings > Privacy & Security > Accessibility`, then allow Linka or your terminal and restart the app if needed.
+Linka on macOS needs the right system permissions to work correctly.
+Grant `Accessibility` to the app that actually launches Linka, which may be `Linka.app`, `Terminal`, or your editor if you run it from there.
+If you use Bridge screen capture, also grant `Screen Recording` to that same app.
+If macOS asks for `Local Network` access, allow it so your phone can reach Linka over the LAN.
+After changing permissions, fully quit Linka and open it again.
 Run `npm install` fresh on macOS and do not copy `node_modules` from a Windows checkout, or Electron may resolve to `electron.exe` instead of the macOS app binary.
 
 Linka has two local modes:
@@ -59,7 +62,8 @@ Linka has two local modes:
 ### macOS Distribution Notes
 
 - Linka for macOS currently requests `Accessibility` so it can control mouse and keyboard input. This is a high-impact permission and should only be enabled on machines you trust.
-- Do not request `Screen Recording` by default unless you are explicitly using screen capture features.
+- `Screen Recording` is only needed when using Bridge screen capture, and should not be enabled unless that feature is actually needed.
+- macOS may also prompt for `Local Network` access so phones on the same LAN can connect to Linka.
 - For local development, run Linka directly from the repo or from a locally generated app bundle on your own Mac.
 - Before distributing a macOS app build to other users, sign and notarize it properly. Unsigned or quarantined builds can trigger Gatekeeper warnings such as `cannot be verified` or `Move to Trash`.
 - Keep the app's permissions narrow and honest. Avoid bundling unrelated capabilities or background behavior that would make App Review or Gatekeeper trust harder.
@@ -81,12 +85,22 @@ npm run build:native:mac
 npm run dev
 ```
 
+Before testing input control on macOS, confirm these permissions:
+
+- `System Settings > Privacy & Security > Accessibility`: required for mouse, keyboard, scroll, volume, and mute control.
+- `System Settings > Privacy & Security > Screen Recording`: required only if you use Bridge screen capture.
+- `System Settings > Privacy & Security > Local Network`: allow it if macOS prompts, so your phone can connect to the local Linka server.
+
+Important:
+
+- Grant the permission to the app that launches Linka. If you run from Terminal, grant Terminal. If you run the packaged app, grant `Linka.app`.
+- After enabling a permission, quit and reopen the launching app, then reopen Linka.
+- If macOS still shows stale launcher behavior, reopen the Electron-generated `Linka.app` so the OS re-registers the correct bundle.
+
 If you want a local clickable macOS app bundle for testing:
 
 ```bash
-npm run build:icon:mac
-npm run build:native:mac
-node node_modules/vite/bin/vite.js build
+npm run build:mac:app
 ```
 
 If Electron still looks cross-platform wrong after copying a workspace between machines, run:
