@@ -30,18 +30,15 @@ try {
 }
 `;
 
-  const result = spawnSync('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    script,
-  ], {
-    encoding: 'utf8',
-    maxBuffer: 60 * 1024 * 1024,
-    windowsHide: true,
-  });
+  const result = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    {
+      encoding: 'utf8',
+      maxBuffer: 60 * 1024 * 1024,
+      windowsHide: true,
+    },
+  );
 
   if (result.status !== 0) {
     throw new Error(result.stderr?.trim() || 'PowerShell screen capture failed.');
@@ -78,8 +75,19 @@ export function capturePlatformScreenFallback() {
   }
 
   if (process.platform === 'darwin') {
-    // TODO(macOS): add a native fallback capture path if Electron capture is insufficient.
-    throw new Error('Screen capture fallback is not implemented for macOS yet.');
+    const result = spawnSync('screencapture', ['-C', '-x', '-t', 'png', '-'], {
+      encoding: 'buffer',
+      maxBuffer: 60 * 1024 * 1024,
+      timeout: 15000,
+    });
+
+    if (result.status !== 0 || !result.stdout || result.stdout.length === 0) {
+      throw new Error(
+        result.stderr?.toString()?.trim() || 'screencapture failed to produce an image.',
+      );
+    }
+
+    return `data:image/png;base64,${result.stdout.toString('base64')}`;
   }
 
   throw new Error('Screen capture is not available on this platform.');
@@ -101,8 +109,12 @@ export function configurePlatformAutoStart({
   }
 
   if (process.platform === 'darwin') {
-    // TODO(macOS): wire this up through app.setLoginItemSettings when launch-at-login is added.
-    return false;
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      path: process.execPath,
+      args: [startHiddenArg],
+    });
+    return true;
   }
 
   if (!isStartupRegistrationSupported(app)) {
@@ -110,5 +122,15 @@ export function configurePlatformAutoStart({
   }
 
   const command = `"${process.execPath}" ${startHiddenArg}`;
-  return runRegistryCommand(['add', startupRegPath, '/v', appName, '/t', 'REG_SZ', '/d', command, '/f']);
+  return runRegistryCommand([
+    'add',
+    startupRegPath,
+    '/v',
+    appName,
+    '/t',
+    'REG_SZ',
+    '/d',
+    command,
+    '/f',
+  ]);
 }

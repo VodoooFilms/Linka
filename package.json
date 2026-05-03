@@ -1,7 +1,7 @@
 {
   "name": "linka",
-  "version": "0.0.0",
-  "description": "A local phone remote controller and temporary text/file transfer bridge for Windows.",
+  "version": "1.0.0",
+  "description": "A local phone remote controller and temporary text/file transfer bridge for Windows and macOS.",
   "license": "MIT",
   "type": "module",
   "main": "main.js",
@@ -13,10 +13,15 @@
     "start": "node scripts/run-electron.cjs",
     "start:server": "node server.js",
     "lint": "tsc --noEmit",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write '**/*.{ts,tsx,js,cjs,mjs,json,md,css,html}'",
+    "format:check": "prettier --check '**/*.{ts,tsx,js,cjs,mjs,json,md,css,html}'",
     "electron:rebuild": "npm rebuild electron",
     "build:icon:mac": "node scripts/generate-mac-icon.cjs",
     "build:native:mac": "mkdir -p native/mac-input/bin && xcrun swiftc -O -framework ApplicationServices -framework AppKit native/mac-input/main.swift -o native/mac-input/bin/Linka.NativeInput",
+    "build:native:mac:universal": "node scripts/build-mac-universal.cjs",
     "build:mac:app": "npm run build:icon:mac && npm run build:native:mac && npm run build && electron-builder --mac dir",
+    "build:mac:dmg": "npm run build:icon:mac && npm run build:native:mac && npm run build && electron-builder --mac dmg",
     "build:native:win": "dotnet publish native/win-input/Linka.NativeInput.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true",
     "patch:electron-icon": "node scripts/patch-electron-icon.cjs",
     "apply:win-icon": "node scripts/apply-windows-icon.cjs",
@@ -31,18 +36,24 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.59.1",
+    "@typescript-eslint/parser": "^8.59.1",
     "electron": "^41.1.0",
     "electron-builder": "^26.8.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-prettier": "^5.5.5",
+    "prettier": "^3.8.3",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   },
   "build": {
     "appId": "com.linka.desktop",
     "productName": "Linka",
-    "artifactName": "Linka.${ext}",
+    "artifactName": "Linka-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist_electron"
     },
@@ -51,6 +62,7 @@
       "build/linka-icon.ico",
       "build/linka.icns",
       "build/linka-logo.png",
+      "build/entitlements.mac.plist",
       "dist/**/*",
       "main.js",
       "connection-preload.cjs",
@@ -70,12 +82,38 @@
       "signAndEditExecutable": false
     },
     "mac": {
-      "target": "dir",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/linka.icns",
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Linka uses the local network to connect your phone and computer.",
+        "NSAccessibilityUsageDescription": "Linka needs Accessibility access to control your mouse and keyboard from your phone.",
+        "NSScreenCaptureUsageDescription": "Linka needs Screen Recording access to capture your screen for the Bridge feature."
+      }
+    },
+    "dmg": {
+      "artifactName": "Linka-${version}-macOS-${arch}.dmg",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     },
     "nsis": {
-      "artifactName": "Linka-Setup.${ext}",
+      "artifactName": "Linka-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": false,
@@ -88,7 +126,7 @@
       "include": "build/installer.nsh"
     },
     "portable": {
-      "artifactName": "Linka.${ext}"
+      "artifactName": "Linka-${version}-portable.${ext}"
     },
     "asar": false
   }

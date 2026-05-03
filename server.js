@@ -50,9 +50,7 @@ function withPairingParams(baseUrl, sessionId, pairingToken) {
 function getBridgeContentBytes(content) {
   if (typeof content !== 'string') return 0;
 
-  const base64 = content.startsWith('data:')
-    ? content.slice(content.indexOf(',') + 1)
-    : content;
+  const base64 = content.startsWith('data:') ? content.slice(content.indexOf(',') + 1) : content;
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
 }
@@ -79,15 +77,17 @@ function setupFileLogging() {
   for (const method of ['log', 'warn', 'error']) {
     const original = console[method].bind(console);
     console[method] = (...args) => {
-      const line = args.map((arg) => {
-        if (arg instanceof Error) return arg.stack || arg.message;
-        if (typeof arg === 'string') return arg;
-        try {
-          return JSON.stringify(arg);
-        } catch (_error) {
-          return String(arg);
-        }
-      }).join(' ');
+      const line = args
+        .map((arg) => {
+          if (arg instanceof Error) return arg.stack || arg.message;
+          if (typeof arg === 'string') return arg;
+          try {
+            return JSON.stringify(arg);
+          } catch (_error) {
+            return String(arg);
+          }
+        })
+        .join(' ');
 
       fs.appendFile(logFile, `[${new Date().toISOString()}] [${method}] ${line}\n`, () => {});
       original(...args);
@@ -97,16 +97,24 @@ function setupFileLogging() {
 
 function isLikelyVirtualAdapter(name, address) {
   const label = String(name || '').toLowerCase();
-  return /virtual|virtualbox|vmware|hyper-v|vethernet|host-only|bluetooth|docker|wsl|loopback|tailscale|zerotier|npcap|tunnel/.test(label)
-    || address.startsWith('169.254.')
-    || address.startsWith('192.168.56.');
+  return (
+    /virtual|virtualbox|vmware|hyper-v|vethernet|host-only|bluetooth|docker|wsl|loopback|tailscale|zerotier|npcap|tunnel/.test(
+      label,
+    ) ||
+    address.startsWith('169.254.') ||
+    address.startsWith('192.168.56.')
+  );
 }
 
 function scoreNetworkCandidate(name, address) {
   let score = 0;
   const label = String(name || '').toLowerCase();
 
-  if (address.startsWith('192.168.') || address.startsWith('10.') || /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)) {
+  if (
+    address.startsWith('192.168.') ||
+    address.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
+  ) {
     score += 50;
   }
   if (/wi-?fi|wireless|wlan/.test(label)) score += 40;
@@ -141,7 +149,8 @@ function getNetworkCandidates(port) {
 
 function getConnectionInfo(port) {
   const candidates = getNetworkCandidates(port);
-  const recommended = candidates.find((candidate) => !candidate.likelyVirtual) || candidates[0] || null;
+  const recommended =
+    candidates.find((candidate) => !candidate.likelyVirtual) || candidates[0] || null;
   return {
     bindHost: BIND_HOST,
     port,
@@ -156,7 +165,9 @@ function logRequest(req, res, next) {
   const started = Date.now();
   res.on('finish', () => {
     const remote = req.socket.remoteAddress || 'unknown';
-    console.log(`[http] ${remote} ${req.method} ${req.originalUrl} -> ${res.statusCode} ${Date.now() - started}ms`);
+    console.log(
+      `[http] ${remote} ${req.method} ${req.originalUrl} -> ${res.statusCode} ${Date.now() - started}ms`,
+    );
   });
   next();
 }
@@ -217,13 +228,14 @@ function handleCommand(input, data) {
 function normalizeBridgeMessage(message) {
   if (!message || typeof message !== 'object') return null;
 
-  const type = message.type === 'image'
-    ? 'image'
-    : message.type === 'text'
-      ? 'text'
-      : message.type === 'file'
-        ? 'file'
-        : null;
+  const type =
+    message.type === 'image'
+      ? 'image'
+      : message.type === 'text'
+        ? 'text'
+        : message.type === 'file'
+          ? 'file'
+          : null;
   const from = message.from === 'pc' ? 'pc' : message.from === 'phone' ? 'phone' : null;
   const content = typeof message.content === 'string' ? message.content : '';
 
@@ -249,15 +261,10 @@ export async function startServer(options = {}) {
   setupFileLogging();
   const PORT = Number(options.port || resolveDefaultPort());
   const port = PORT;
-  const onClientConnected = typeof options.onClientConnected === 'function'
-    ? options.onClientConnected
-    : null;
-  const captureScreen = typeof options.captureScreen === 'function'
-    ? options.captureScreen
-    : null;
-  const getDisplays = typeof options.getDisplays === 'function'
-    ? options.getDisplays
-    : null;
+  const onClientConnected =
+    typeof options.onClientConnected === 'function' ? options.onClientConnected : null;
+  const captureScreen = typeof options.captureScreen === 'function' ? options.captureScreen : null;
+  const getDisplays = typeof options.getDisplays === 'function' ? options.getDisplays : null;
   const app = express();
   const server = createHttpServer(app);
   const wss = new WebSocketServer({ server, maxPayload: WS_MAX_PAYLOAD_BYTES });
@@ -274,7 +281,11 @@ export async function startServer(options = {}) {
     return {
       sessionId: activeSessionId,
       pairingUrl: withPairingParams(connectionInfo.primaryUrl, activeSessionId, activePairingToken),
-      localhostPairingUrl: withPairingParams(connectionInfo.localhostUrl, activeSessionId, activePairingToken),
+      localhostPairingUrl: withPairingParams(
+        connectionInfo.localhostUrl,
+        activeSessionId,
+        activePairingToken,
+      ),
     };
   }
 
@@ -283,8 +294,9 @@ export async function startServer(options = {}) {
       return;
     }
 
-    const ordered = [...reconnectTokens.entries()]
-      .sort((a, b) => (a[1].lastSeenAt || a[1].createdAt) - (b[1].lastSeenAt || b[1].createdAt));
+    const ordered = [...reconnectTokens.entries()].sort(
+      (a, b) => (a[1].lastSeenAt || a[1].createdAt) - (b[1].lastSeenAt || b[1].createdAt),
+    );
 
     for (const [token] of ordered.slice(0, reconnectTokens.size - MAX_RECONNECT_TOKENS)) {
       reconnectTokens.delete(token);
@@ -324,7 +336,7 @@ export async function startServer(options = {}) {
           inputBackend: input.name,
           nativeInputReady: input.ready,
           permissionMissing: state.permissionMissing,
-          message: state.message
+          message: state.message,
         },
       });
     },
@@ -432,16 +444,22 @@ export async function startServer(options = {}) {
 
       clearSocketAuth(ws);
       authenticateSocket(ws, authMode);
-      sendJson(ws, createAuthSuccessPayload(ws, {
-        mode: authMode,
-        remoteAddress: req.socket.remoteAddress || 'unknown',
-      }));
+      sendJson(
+        ws,
+        createAuthSuccessPayload(ws, {
+          mode: authMode,
+          remoteAddress: req.socket.remoteAddress || 'unknown',
+        }),
+      );
       if (input.getVolumeState) {
-        input.getVolumeState().then((state) => {
-          if (state && ws.readyState === 1 && ws._authenticated) {
-            sendJson(ws, { event: 'volume_state', payload: state });
-          }
-        }).catch(() => {});
+        input
+          .getVolumeState()
+          .then((state) => {
+            if (state && ws.readyState === 1 && ws._authenticated) {
+              sendJson(ws, { event: 'volume_state', payload: state });
+            }
+          })
+          .catch(() => {});
       }
       onClientConnected?.({
         clients: clients.size,
@@ -460,17 +478,23 @@ export async function startServer(options = {}) {
     reconnectTokens.delete(providedToken);
     clearSocketAuth(ws);
     authenticateSocket(ws, authMode);
-    sendJson(ws, createAuthSuccessPayload(ws, {
-      mode: authMode,
-      remoteAddress: req.socket.remoteAddress || 'unknown',
-      previousIssuedAt: existing.createdAt,
-    }));
+    sendJson(
+      ws,
+      createAuthSuccessPayload(ws, {
+        mode: authMode,
+        remoteAddress: req.socket.remoteAddress || 'unknown',
+        previousIssuedAt: existing.createdAt,
+      }),
+    );
     if (input.getVolumeState) {
-      input.getVolumeState().then((state) => {
-        if (state && ws.readyState === 1 && ws._authenticated) {
-          sendJson(ws, { event: 'volume_state', payload: state });
-        }
-      }).catch(() => {});
+      input
+        .getVolumeState()
+        .then((state) => {
+          if (state && ws.readyState === 1 && ws._authenticated) {
+            sendJson(ws, { event: 'volume_state', payload: state });
+          }
+        })
+        .catch(() => {});
     }
     onClientConnected?.({
       clients: clients.size,
@@ -502,7 +526,8 @@ export async function startServer(options = {}) {
       }
 
       try {
-        const displayId = typeof data.payload?.displayId === 'string' ? data.payload.displayId : undefined;
+        const displayId =
+          typeof data.payload?.displayId === 'string' ? data.payload.displayId : undefined;
         const content = await captureScreen(displayId);
         const message = normalizeBridgeMessage({
           id: randomUUID(),
@@ -545,9 +570,10 @@ export async function startServer(options = {}) {
         return true;
       }
 
-      const mediaBytes = message.type === 'image' || message.type === 'file'
-        ? getBridgeContentBytes(message.content)
-        : 0;
+      const mediaBytes =
+        message.type === 'image' || message.type === 'file'
+          ? getBridgeContentBytes(message.content)
+          : 0;
 
       if (mediaBytes > MAX_BRIDGE_FILE_BYTES) {
         console.warn('[ws] Bridge file too large, ignoring.');
@@ -568,7 +594,10 @@ export async function startServer(options = {}) {
 
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
-    res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:;");
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:;",
+    );
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-DNS-Prefetch-Control', 'off');
@@ -641,7 +670,9 @@ export async function startServer(options = {}) {
 
   wss.on('connection', (ws, req) => {
     clients.add(ws);
-    console.log(`[ws] Client connected from ${req.socket.remoteAddress}. Total clients: ${clients.size}`);
+    console.log(
+      `[ws] Client connected from ${req.socket.remoteAddress}. Total clients: ${clients.size}`,
+    );
     ws._authenticated = false;
     ws._sessionId = null;
     ws._reconnectToken = null;
@@ -709,7 +740,7 @@ export async function startServer(options = {}) {
 
     ws.on('close', () => {
       clearTimeout(ws._heartbeatTimeout);
-       clearSocketAuth(ws);
+      clearSocketAuth(ws);
       clients.delete(ws);
       console.log(`[ws] Client disconnected. Total clients: ${clients.size}`);
     });
@@ -747,8 +778,12 @@ export async function startServer(options = {}) {
   console.log(`[net] Recommended phone URL: ${connectionInfo.primaryUrl}`);
   console.log(`[net] Pairing URL: ${getSessionSnapshot().pairingUrl}`);
   console.log(`[net] Localhost URL: ${connectionInfo.localhostUrl}`);
-  console.log(`[net] Candidates: ${connectionInfo.candidates.map((candidate) => `${candidate.url} (${candidate.name}, score=${candidate.score}${candidate.likelyVirtual ? ', virtual/link-local' : ''})`).join(' | ') || 'none'}`);
-  console.log(`Input backend: ${input.name}${input.ready ? '' : ' (not controlling native input)'}`);
+  console.log(
+    `[net] Candidates: ${connectionInfo.candidates.map((candidate) => `${candidate.url} (${candidate.name}, score=${candidate.score}${candidate.likelyVirtual ? ', virtual/link-local' : ''})`).join(' | ') || 'none'}`,
+  );
+  console.log(
+    `Input backend: ${input.name}${input.ready ? '' : ' (not controlling native input)'}`,
+  );
 
   return {
     port,

@@ -1,4 +1,15 @@
-import { app, BrowserWindow, Menu, Tray, clipboard, desktopCapturer, ipcMain, nativeImage, screen, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  Tray,
+  clipboard,
+  desktopCapturer,
+  ipcMain,
+  nativeImage,
+  screen,
+  shell,
+} from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -41,7 +52,12 @@ ipcMain.handle('open-url', (_event, value) => {
 
 function getPrimaryLanUrl() {
   const PORT = getElectronPort();
-  return serverInfo?.primaryUrl || serverInfo?.urls?.find((url) => !url.includes('localhost')) || serverInfo?.urls?.[0] || `http://localhost:${PORT}`;
+  return (
+    serverInfo?.primaryUrl ||
+    serverInfo?.urls?.find((url) => !url.includes('localhost')) ||
+    serverInfo?.urls?.[0] ||
+    `http://localhost:${PORT}`
+  );
 }
 
 function getPairingUrl() {
@@ -183,7 +199,7 @@ function closeConnectionWindow() {
   if (statusWindow && !statusWindow.isDestroyed()) {
     // Hide the window immediately to improve perceived responsiveness
     statusWindow.hide();
-    
+
     // Defer the actual close operation to avoid blocking the event loop
     // or causing macOS WindowServer hangs when the only window of a dock-hidden app closes.
     setTimeout(() => {

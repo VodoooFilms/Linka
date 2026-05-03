@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 dist_electron/
+Linka.app/
 release/
 out/
 *.asar
@@ -41,7 +42,9 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
-Linka.app/
 
 # Local reports (never commit)
 reportes/
+
+# Test coverage
+coverage/
