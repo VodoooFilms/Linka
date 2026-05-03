@@ -2,7 +2,7 @@
 
 <img src="build/linka-logo.png" alt="Linka logo" width="160">
 
-Linka turns a phone browser into a local remote controller and transfer bridge for a Windows PC or Mac.
+Linka turns a phone browser into a trackpad, keyboard, scroll pad, and volume controller for a Windows PC or Mac.
 
 It exists for couch, TV, projector, and desk setups where reaching for a physical mouse, keyboard, or quick transfer tool is inconvenient. The desktop app starts a local server, shows a QR code, and keeps the controller available from the desktop tray or menu bar.
 
