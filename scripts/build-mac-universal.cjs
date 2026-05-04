@@ -35,17 +35,20 @@ const arch = process.arch; // 'arm64' or 'x64'
 // Build for arm64
 run(
   `xcrun swiftc -O -target arm64-apple-macos11 ${SWIFT_FRAMEWORKS.join(' ')} "${SWIFT_SOURCE}" -o "${ARM64_OUT}"`,
-  'Building arm64 binary'
+  'Building arm64 binary',
 );
 
 // Build for x86_64
 run(
   `xcrun swiftc -O -target x86_64-apple-macos11 ${SWIFT_FRAMEWORKS.join(' ')} "${SWIFT_SOURCE}" -o "${X64_OUT}"`,
-  'Building x86_64 binary'
+  'Building x86_64 binary',
 );
 
 // Create universal binary with lipo
-run(`lipo -create "${ARM64_OUT}" "${X64_OUT}" -output "${UNIVERSAL_OUT}"`, 'Creating universal binary');
+run(
+  `lipo -create "${ARM64_OUT}" "${X64_OUT}" -output "${UNIVERSAL_OUT}"`,
+  'Creating universal binary',
+);
 
 // Verify
 const fileType = execSync(`file "${UNIVERSAL_OUT}"`, { encoding: 'utf8' }).trim();

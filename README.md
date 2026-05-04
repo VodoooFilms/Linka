@@ -14,10 +14,11 @@ If macOS asks for `Local Network` access, allow it so your phone can reach Linka
 After changing permissions, fully quit Linka and open it again.
 Run `npm install` fresh on macOS and do not copy `node_modules` from a Windows checkout, or Electron may resolve to `electron.exe` instead of the macOS app binary.
 
-Linka has two local modes:
+Linka has three local modes:
 
 - Remote mode: phone-based trackpad, keyboard, scroll, mouse, volume, and mute controls.
 - Bridge mode: a temporary local space for sending text, images, and small files between phone and PC over the same WebSocket connection.
+- **Teach mode** (macOS only): record mouse clicks, drags, and keystrokes as reusable Hermes Agent skills so your AI assistant can replay your workflows.
 
 ## Screenshots
 
@@ -43,11 +44,48 @@ Linka has two local modes:
 - **Reconnect persistence**: once paired, the mobile client can automatically rejoin the current desktop session after a refresh or browser reopen.
 - Native input backends for Windows and macOS.
 - Portable Windows Electron build with a bundled native input helper.
+- **Teach Mode** (macOS): record and replay GUI workflows as Hermes Agent skills.
+- **Hermes integration**: auto-generated skill files with screenshots, window bounds, and replay instructions.
+
+## Hermes Integration (macOS only)
+
+Linka includes a Teach Mode that records GUI interactions and saves them as [Hermes Agent](https://hermes-agent.nousresearch.com/docs) skills. Hermes can replay recorded workflows using CGEvent simulation.
+
+### How it works
+
+1. Click **Teach** in Linka's top bar to start recording. Any mouse click, drag, or keystroke is captured through the CGEvent tap.
+2. Click Teach again to stop. Enter a name. Linka writes a skill file to `~/.hermes/skills/linka/<name>.md`.
+3. The skill file includes:
+   - Timestamped click coordinates and action types.
+   - A reference screenshot (`<name>.png`) captured at recording time.
+   - The frontmost window position at recording time (for coordinate offset calculation if windows move).
+   - Replay instructions for Hermes.
+4. Hermes loads the skill and replays the steps using CGEvent mouse/keyboard simulation, applying window position offsets when available.
+
+### Why this exists
+
+GUI automation without an API: do a workflow once, Hermes replays it. Useful for repetitive tasks in apps with no CLI, form filling, file organization, or any point-and-click sequence you run often.
+
+### Permissions
+
+Uses the same `Accessibility` permission Linka already needs. No extra grants required.
+
+### Skill discovery
+
+Skills live in `~/.hermes/skills/linka/`. Hermes Agent auto-discovers and loads them from that directory.
+
+### Bridge events
+
+Raw CGEvent data is available via `GET /hermes/events` (HTTP) or through WebSocket bridge events. Hermes can ingest these programmatically for pattern detection or workflow analysis.
+
+### Hotkey
+
+`Cmd+Shift+Option+L` flushes the current CGEvent tap buffer to `~/.hermes/linka/inbox/`. Hermes ingests and summarizes these captures automatically.
 
 ## Platform Status
 
 - Windows: full desktop support, native input helper, Windows packaging scripts, installer and portable build flow.
-- macOS: desktop support is available and tested for local use. Mouse, click, right click, scroll, keyboard, volume, and mute work through the native macOS helper.
+- macOS: desktop support is available and tested for local use. Mouse, click, right click, scroll, keyboard, volume, and mute work through the native macOS helper. Teach Mode and Hermes integration are **exclusive to macOS** (CGEvent tap + Swift window bounds + Electron desktopCapturer).
 - macOS packaging is currently intended for local builds and internal testing. Windows packaging remains the more complete release path today.
 
 ### Security
@@ -105,6 +143,8 @@ If you want a local clickable macOS app bundle for testing:
 npm run build:mac:app
 ```
 
+That command now updates `/Applications/Linka.app` directly so there is only one macOS app copy to test and grant permissions to.
+
 If Electron still looks cross-platform wrong after copying a workspace between machines, run:
 
 ```bash
@@ -140,6 +180,7 @@ npm run build:native:mac
 - Use Right for right-click.
 - Use Keyboard to open mobile typing controls with Backspace, Esc, and Tab shortcuts. On macOS, the shortcut modifier is shown as `⌘`; on Windows, it remains `Ctrl`.
 - Use Mute and Volume for desktop audio control. The volume slider syncs to the desktop's actual level on connect.
+- Use **Teach** (macOS) to record mouse clicks and keystrokes as Hermes Agent skills. Click to start recording, click again to stop and save.
 - Use Bridge to switch into a clean transfer panel for sending text snippets and images between phone and PC.
 - Tap Capture in Bridge to screenshot the PC screen.
 - Use Copy on text items and Download on image items. Bridge data is RAM-only and disappears when the app/server restarts.
@@ -208,8 +249,7 @@ This macOS build path is currently best treated as a local/internal bundle. For 
 |-- build/linka-icon.ico        # Windows app icon
 |-- build/linka.icns            # macOS app icon
 |-- build/linka-logo.png        # Project logo asset
-|-- build/installer.nsh         # NSIS installer macros (auto-start registry)
-`-- linkalogo.png               # Legacy project logo asset
+`-- build/installer.nsh         # NSIS installer macros (auto-start registry)
 ```
 
 ## Contributing

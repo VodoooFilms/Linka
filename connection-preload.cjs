@@ -7,4 +7,10 @@ contextBridge.exposeInMainWorld('linka', {
   openUrl(value) {
     return ipcRenderer.invoke('open-url', String(value || ''));
   },
+  resetPairing() {
+    return ipcRenderer.invoke('reset-pairing');
+  },
+  closeWindow() {
+    return ipcRenderer.invoke('close-window');
+  },
 });

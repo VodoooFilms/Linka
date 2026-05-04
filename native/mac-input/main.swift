@@ -20,6 +20,318 @@ private enum AudioControlError: Error {
     case osStatus(OSStatus, String)
 }
 
+// ============================================================================
+// MARK: - Hermes Linka Event Capture
+// ============================================================================
+
+private struct CapturedEvent: Codable {
+    let ts: Double          // Unix timestamp with milliseconds
+    let type: String        // mouse_moved, left_down, left_up, right_down, right_up,
+                            // key_combo, scroll, mouse_drag
+    let x: Double?
+    let y: Double?
+    let key: String?        // virtual key code as hex string e.g. "0x24"
+    let modifiers: [String]?
+    let dy: Int32?          // scroll delta
+}
+
+private struct EventBuffer {
+    private var events: [CapturedEvent] = []
+    private let maxEvents: Int
+    private let maxAgeSeconds: Double
+    private let lock = NSLock()
+
+    // Throttling state
+    private var lastMovePoint: CGPoint = .zero
+    private var lastMoveTime: Double = 0
+    private let minMoveDelta: CGFloat = 20.0   // only capture moves >20px
+    private let minMoveInterval: Double = 0.15  // max ~7 move events/sec
+
+    init(maxEvents: Int = 600, maxAgeSeconds: Double = 60.0) {
+        self.maxEvents = maxEvents
+        self.maxAgeSeconds = maxAgeSeconds
+    }
+
+    mutating func append(_ event: CapturedEvent) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        // Throttle mouse moves: skip if too close to last captured move
+        if event.type == "mouse_moved" {
+            if let x = event.x, let y = event.y {
+                let point = CGPoint(x: x, y: y)
+                let dx = abs(point.x - lastMovePoint.x)
+                let dy = abs(point.y - lastMovePoint.y)
+                let dt = event.ts - lastMoveTime
+                if dx < minMoveDelta && dy < minMoveDelta && dt < 0.3 {
+                    return // skip — not enough movement
+                }
+                lastMovePoint = point
+                lastMoveTime = event.ts
+            }
+            // Rate limit: if we just captured a move < minMoveInterval ago, skip
+            if let last = events.last, last.type == "mouse_moved",
+               event.ts - last.ts < minMoveInterval {
+                return
+            }
+        }
+
+        events.append(event)
+
+        // Evict events older than maxAgeSeconds
+        let cutoff = event.ts - maxAgeSeconds
+        while let first = events.first, first.ts < cutoff {
+            events.removeFirst()
+        }
+
+        // Evict oldest if over capacity
+        while events.count > maxEvents {
+            events.removeFirst()
+        }
+    }
+
+    func dump() -> [CapturedEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let now = Date().timeIntervalSince1970
+        let cutoff = now - maxAgeSeconds
+        let filtered = events.filter { $0.ts >= cutoff }
+        return Array(filtered.suffix(maxEvents))
+    }
+
+    mutating func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        events.removeAll()
+        lastMovePoint = .zero
+        lastMoveTime = 0
+    }
+}
+
+// Virtual key code → readable name (common keys)
+private let keyNameMap: [CGKeyCode: String] = [
+    0x00: "a", 0x01: "s", 0x02: "d", 0x03: "f", 0x04: "h", 0x05: "g",
+    0x06: "z", 0x07: "x", 0x08: "c", 0x09: "v", 0x0B: "b",
+    0x0C: "q", 0x0D: "w", 0x0E: "e", 0x0F: "r", 0x10: "y", 0x11: "t",
+    0x12: "1", 0x13: "2", 0x14: "3", 0x15: "4", 0x16: "6", 0x17: "5",
+    0x18: "=", 0x19: "9", 0x1A: "7", 0x1B: "-", 0x1C: "8", 0x1D: "0",
+    0x1F: "o", 0x20: "u", 0x22: "i", 0x23: "p",
+    0x24: "return", 0x25: "l", 0x26: "j", 0x28: "k",
+    0x29: ";", 0x2B: ",", 0x2C: "/", 0x2D: "n", 0x2E: "m", 0x2F: ".",
+    0x30: "tab", 0x31: "space",
+    0x33: "delete", 0x35: "escape",
+    0x37: "cmd", 0x38: "shift", 0x3A: "option", 0x3B: "control",
+    0x7B: "left", 0x7C: "right", 0x7D: "down", 0x7E: "up",
+    0x60: "f5", 0x61: "f6", 0x62: "f7",
+]
+
+private var eventBuffer = EventBuffer()
+private var captureActive = false
+private var eventTap: CFMachPort?
+private var teachMarker: Double? = nil
+
+private func modifierNames(from flags: CGEventFlags) -> [String] {
+    var names: [String] = []
+    if flags.contains(.maskCommand)  { names.append("cmd") }
+    if flags.contains(.maskShift)    { names.append("shift") }
+    if flags.contains(.maskAlternate){ names.append("option") }
+    if flags.contains(.maskControl)  { names.append("control") }
+    return names
+}
+
+private func captureEventCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    refcon: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    let now = Date().timeIntervalSince1970
+    let location = event.location
+
+    var captured: CapturedEvent?
+
+    switch type {
+    case .mouseMoved:
+        captured = CapturedEvent(
+            ts: now, type: "mouse_moved",
+            x: Double(location.x), y: Double(location.y),
+            key: nil, modifiers: nil, dy: nil
+        )
+
+    case .leftMouseDown:
+        captured = CapturedEvent(
+            ts: now, type: "left_down",
+            x: Double(location.x), y: Double(location.y),
+            key: nil, modifiers: nil, dy: nil
+        )
+
+    case .leftMouseUp:
+        captured = CapturedEvent(
+            ts: now, type: "left_up",
+            x: Double(location.x), y: Double(location.y),
+            key: nil, modifiers: nil, dy: nil
+        )
+
+    case .rightMouseDown:
+        captured = CapturedEvent(
+            ts: now, type: "right_down",
+            x: Double(location.x), y: Double(location.y),
+            key: nil, modifiers: nil, dy: nil
+        )
+
+    case .rightMouseUp:
+        captured = CapturedEvent(
+            ts: now, type: "right_up",
+            x: Double(location.x), y: Double(location.y),
+            key: nil, modifiers: nil, dy: nil
+        )
+
+    case .scrollWheel:
+        let deltaY = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
+        guard deltaY != 0 else { break }
+        captured = CapturedEvent(
+            ts: now, type: "scroll",
+            x: Double(location.x), y: Double(location.y),
+            key: nil, modifiers: nil, dy: Int32(deltaY)
+        )
+
+    case .keyDown:
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = event.flags
+        let mods = modifierNames(from: flags)
+        // Capture key combos or special keys. During teach mode, capture ALL keystrokes.
+        if teachMarker != nil || !mods.isEmpty || isSpecialKey(keyCode) {
+            let keyName = keyNameMap[keyCode] ?? String(format: "0x%02X", keyCode)
+            captured = CapturedEvent(
+                ts: now, type: "key_combo",
+                x: nil, y: nil,
+                key: keyName, modifiers: mods.isEmpty ? nil : mods, dy: nil
+            )
+        }
+
+    case .leftMouseDragged:
+        captured = CapturedEvent(
+            ts: now, type: "mouse_drag",
+            x: Double(location.x), y: Double(location.y),
+            key: nil, modifiers: nil, dy: nil
+        )
+
+    default:
+        break
+    }
+
+    if let evt = captured {
+        eventBuffer.append(evt)
+    }
+
+    // Always pass the event through — we're listen-only
+    return Unmanaged.passUnretained(event)
+}
+
+private func isSpecialKey(_ keyCode: CGKeyCode) -> Bool {
+    // Keys that indicate user intent even without modifiers
+    let specials: Set<CGKeyCode> = [
+        0x24,  // return
+        0x30,  // tab
+        0x35,  // escape
+        0x33,  // delete/backspace
+        0x31,  // space
+        0x7B, 0x7C, 0x7D, 0x7E,  // arrows
+        0x60, 0x61, 0x62,  // f5-f7
+    ]
+    return specials.contains(keyCode)
+}
+
+private func startEventCapture() -> Bool {
+    guard !captureActive else { return true }
+
+    let eventMask: CGEventMask = (
+        (1 << CGEventType.mouseMoved.rawValue) |
+        (1 << CGEventType.leftMouseDown.rawValue) |
+        (1 << CGEventType.leftMouseUp.rawValue) |
+        (1 << CGEventType.rightMouseDown.rawValue) |
+        (1 << CGEventType.rightMouseUp.rawValue) |
+        (1 << CGEventType.scrollWheel.rawValue) |
+        (1 << CGEventType.keyDown.rawValue) |
+        (1 << CGEventType.leftMouseDragged.rawValue)
+    )
+
+    guard let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .listenOnly,
+        eventsOfInterest: eventMask,
+        callback: captureEventCallback,
+        userInfo: nil
+    ) else {
+        writeError("Failed to create event tap. Check Accessibility permissions.",
+                    code: "event_tap_failed")
+        return false
+    }
+
+    eventTap = tap
+
+    let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+
+    captureActive = true
+    writeJson([
+        "type": "capture_status",
+        "active": true,
+        "message": "Event capture started (Hermes Linka mode).",
+    ])
+    return true
+}
+
+private func stopEventCapture() {
+    guard captureActive, let tap = eventTap else { return }
+
+    CGEvent.tapEnable(tap: tap, enable: false)
+    // CFRunLoopRemoveSource not needed — tap is disabled and will be released
+    eventTap = nil
+    captureActive = false
+    eventBuffer.clear()
+
+    writeJson([
+        "type": "capture_status",
+        "active": false,
+        "message": "Event capture stopped. Buffer cleared.",
+    ])
+}
+
+private func dumpEvents() {
+    let events = eventBuffer.dump()
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+    guard let jsonData = try? encoder.encode(events),
+          let jsonString = String(data: jsonData, encoding: .utf8) else {
+        writeError("Failed to encode event buffer.")
+        return
+    }
+
+    // Write the raw event array via stdout so the Node adapter can pipe it
+    writeJson([
+        "type": "events_dump",
+        "count": events.count,
+        "active": captureActive,
+    ])
+
+    // Also write the events as a newline-delimited JSON payload on stdout
+    // The Node adapter will capture this as a special response
+    outputQueue.sync {
+        let payload = "EVENTS_JSON:\(jsonString.replacingOccurrences(of: "\n", with: ""))\n"
+        FileHandle.standardOutput.write(Data(payload.utf8))
+    }
+}
+
+// ============================================================================
+// MARK: - JSON Output Helpers (existing)
+// ============================================================================
+
 private func writeJson(_ object: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object, options: []),
           var text = String(data: data, encoding: .utf8) else {
@@ -221,11 +533,9 @@ private func mouseEventType(_ button: CGMouseButton, down: Bool) -> CGEventType 
 }
 
 private func currentCursorPosition() -> CGPoint {
-    // Keep cursor reads in the same Quartz coordinate space used by CGEvent posts.
     guard let event = CGEvent(source: nil) else {
         return .zero
     }
-
     return event.location
 }
 
@@ -528,11 +838,16 @@ private func doubleValue(_ json: [String: Any], key: String) -> Double {
     return 0
 }
 
+// ============================================================================
+// MARK: - Command Handler (extended with Hermes Linka commands)
+// ============================================================================
+
 private func handle(_ json: [String: Any]) {
     let type = stringValue(json, key: "type") ?? ""
 
     do {
         switch type {
+        // --- Existing commands ---
         case "status", "getstatus":
             emitStatus()
         case "move":
@@ -562,6 +877,72 @@ private func handle(_ json: [String: Any]) {
             try emitVolumeState()
         case "getvolume":
             try emitVolumeState()
+
+        // --- Hermes Linka commands ---
+        case "capture_start":
+            _ = startEventCapture()
+
+        case "capture_stop":
+            stopEventCapture()
+
+        case "capture_status":
+            writeJson([
+                "type": "capture_status",
+                "active": captureActive,
+                "buffer_count": eventBuffer.dump().count,
+            ])
+
+        case "dump_events":
+            // Auto-start capture if not active
+            if !captureActive {
+                _ = startEventCapture()
+                // Small delay to ensure we have at least some events if buffer was empty
+                usleep(100_000) // 100ms
+            }
+            dumpEvents()
+
+        // --- Hermes Linka Teach mode ---
+        case "teach_start":
+            teachMarker = Date().timeIntervalSince1970
+            let currentCount = eventBuffer.dump().count
+            writeJson([
+                "type": "teach_status",
+                "active": true,
+                "marker_ts": teachMarker!,
+                "buffer_count": currentCount,
+                "message": currentCount > 0
+                    ? "Teach recording started."
+                    : "WARNING: Event buffer is empty. Check Accessibility permission.",
+            ])
+
+        case "teach_stop":
+            guard let marker = teachMarker else {
+                writeError("No teach recording in progress.", code: "teach_not_active")
+                break
+            }
+            let allEvents = eventBuffer.dump()
+            let recorded = allEvents.filter { $0.ts >= marker }
+            teachMarker = nil
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            guard let jsonData = try? encoder.encode(recorded),
+                  let jsonString = String(data: jsonData, encoding: .utf8) else {
+                writeError("Failed to encode teach events.", code: "teach_encode_failed")
+                break
+            }
+
+            writeJson([
+                "type": "teach_events",
+                "count": recorded.count,
+                "marker_ts": marker,
+            ])
+
+            outputQueue.sync {
+                let payload = "EVENTS_JSON:\(jsonString.replacingOccurrences(of: "\n", with: ""))\n"
+                FileHandle.standardOutput.write(Data(payload.utf8))
+            }
+
         default:
             break
         }
@@ -576,14 +957,38 @@ private func handle(_ json: [String: Any]) {
     }
 }
 
+// ============================================================================
+// MARK: - Main Loop
+// ============================================================================
+
 emitStatus()
 
-while let line = readLine() {
-    guard let data = line.data(using: .utf8),
-          let object = try? JSONSerialization.jsonObject(with: data, options: []),
-          let json = object as? [String: Any] else {
-        continue
-    }
+// Hermes Linka: auto-start capture on launch (it's listen-only, no overhead)
+_ = startEventCapture()
 
-    handle(json)
+// Use DispatchSource on stdin so the main run loop can process event tap callbacks
+let stdinSource = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
+var stdinBuf = ""
+stdinSource.setEventHandler {
+    let data = FileHandle.standardInput.availableData
+    guard !data.isEmpty else {
+        // stdin closed — clean exit
+        stopEventCapture()
+        exit(0)
+    }
+    stdinBuf += String(data: data, encoding: .utf8) ?? ""
+    while let nl = stdinBuf.firstIndex(of: "\n") {
+        let line = String(stdinBuf[..<nl])
+        stdinBuf = String(stdinBuf[stdinBuf.index(after: nl)...])
+        guard let d = line.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: d, options: []),
+              let json = obj as? [String: Any] else {
+            continue
+        }
+        handle(json)
+    }
 }
+stdinSource.setCancelHandler { exit(0) }
+stdinSource.resume()
+
+RunLoop.current.run()

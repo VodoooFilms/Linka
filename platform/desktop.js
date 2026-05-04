@@ -104,10 +104,6 @@ export function configurePlatformAutoStart({
   startHiddenArg,
   startupRegPath = DEFAULT_WINDOWS_STARTUP_REG_PATH,
 }) {
-  if (!enabled) {
-    return false;
-  }
-
   if (process.platform === 'darwin') {
     app.setLoginItemSettings({
       openAtLogin: enabled,
@@ -115,6 +111,10 @@ export function configurePlatformAutoStart({
       args: [startHiddenArg],
     });
     return true;
+  }
+
+  if (!enabled) {
+    return false;
   }
 
   if (!isStartupRegistrationSupported(app)) {

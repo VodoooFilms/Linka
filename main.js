@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  globalShortcut,
   Menu,
   Tray,
   clipboard,
@@ -11,6 +12,7 @@ import {
   shell,
 } from 'electron';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import QRCode from 'qrcode';
@@ -27,13 +29,14 @@ const __dirname = path.dirname(__filename);
 let tray = null;
 let statusWindow = null;
 let serverInfo = null;
+let lastClientEvent = null;
 
 const gotTheLock = app.requestSingleInstanceLock();
 const iconPath = getPlatformTrayIconPath(__dirname);
 const APP_NAME = 'Linka';
 const APP_ID = 'com.linka.desktop';
 const START_HIDDEN_ARG = '--hidden';
-const AUTO_START_ENABLED = true;
+const AUTO_START_ENABLED = process.env.LINKA_AUTO_START === 'true' || false;
 const DEFAULT_PRODUCTION_PORT = 3067;
 
 function getElectronPort() {
@@ -47,6 +50,24 @@ ipcMain.handle('copy-text', (_event, value) => {
 
 ipcMain.handle('open-url', (_event, value) => {
   shell.openExternal(String(value || ''));
+  return true;
+});
+
+ipcMain.handle('reset-pairing', async () => {
+  const nextSession = serverInfo?.resetPairing?.();
+  syncSessionInfo(nextSession);
+  rebuildTray();
+  await refreshConnectionWindow();
+  return {
+    pairingUrl: getPairingUrl(),
+    primaryUrl: getPrimaryLanUrl(),
+  };
+});
+
+ipcMain.handle('close-window', () => {
+  if (statusWindow && !statusWindow.isDestroyed()) {
+    statusWindow.close();
+  }
   return true;
 });
 
@@ -86,6 +107,16 @@ function getHostFromUrl(url) {
   }
 }
 
+function buildDesktopBridgeUrl(url) {
+  try {
+    const nextUrl = new URL(url);
+    nextUrl.hash = 'bridge';
+    return nextUrl.toString();
+  } catch (_error) {
+    return `${url}#bridge`;
+  }
+}
+
 async function buildQrDataUrl(value) {
   return QRCode.toDataURL(value, {
     width: 220,
@@ -94,77 +125,181 @@ async function buildQrDataUrl(value) {
   });
 }
 
+function buildLocalImageDataUrl(filePath) {
+  try {
+    const extension = path.extname(filePath).toLowerCase();
+    const mimeType =
+      extension === '.png'
+        ? 'image/png'
+        : extension === '.jpg' || extension === '.jpeg'
+          ? 'image/jpeg'
+          : null;
+    if (!mimeType) return '';
+    const content = fs.readFileSync(filePath);
+    return `data:${mimeType};base64,${content.toString('base64')}`;
+  } catch (_error) {
+    return '';
+  }
+}
+
 async function buildConnectionHtml() {
   const primaryUrl = getPrimaryLanUrl();
   const pairingUrl = getPairingUrl();
   const qrDataUrl = await buildQrDataUrl(pairingUrl);
+  const logoDataUrl = buildLocalImageDataUrl(path.join(__dirname, 'build', 'linka-logo.png'));
   const nativeState = serverInfo?.nativeInputReady
-    ? 'Ready'
+    ? 'Input Ready'
     : serverInfo?.permissionMissing
       ? 'Permissions Missing'
       : 'Input not ready';
+  const inputMessage = serverInfo?.message || 'Scan the QR code from your phone to pair.';
+  const desktopUrl = serverInfo?.localhostPairingUrl || `http://localhost:${getElectronPort()}`;
+  const desktopBridgeUrl = buildDesktopBridgeUrl(desktopUrl);
+  const hostLabel = getHostFromUrl(primaryUrl);
 
   return `<!doctype html>
   <html>
     <head>
       <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
       <title>${APP_NAME}</title>
       <style>
         * { box-sizing: border-box; }
+        :root {
+          color-scheme: dark;
+          --bg: #0a0d10;
+          --panel: rgba(15, 20, 24, 0.97);
+          --line: rgba(255, 255, 255, 0.08);
+          --text: #eef4f2;
+          --muted: #8ca097;
+          --accent: #00d98b;
+          font-family: "Segoe UI", Roboto, Arial, sans-serif;
+        }
         body {
           margin: 0;
-          width: 100vw;
-          height: 100vh;
-          display: grid;
-          place-items: center;
-          background: #101214;
-          color: #eef3f0;
-          font-family: Segoe UI, Arial, sans-serif;
+          min-height: 100vh;
+          overflow: hidden;
+          background: linear-gradient(180deg, #0a0d10, #090b0d);
+          color: var(--text);
+        }
+        body, button {
+          font: inherit;
         }
         main {
-          width: 320px;
-          text-align: center;
+          min-height: 100vh;
+          display: grid;
+          place-items: center;
+          padding: 20px;
+        }
+        .card {
+          width: min(360px, 100%);
+          padding: 22px 24px 24px;
+          display: grid;
+          gap: 14px;
+          border: 1px solid var(--line);
+          border-radius: 20px;
+          background: var(--panel);
+          box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
+        }
+        .logo {
+          width: 126px;
+          height: 126px;
+          margin: 0 auto;
+          object-fit: contain;
+          background: transparent;
+          border-radius: 24px;
         }
         h1 {
-          margin: 0 0 14px;
-          font-size: 22px;
-          font-weight: 700;
-        }
-        img {
-          width: 240px;
-          height: 240px;
-          display: block;
-          margin: 0 auto;
-          padding: 10px;
-          border-radius: 10px;
-          background: #fff;
+          margin: 0;
+          font-size: 26px;
+          line-height: 1;
+          letter-spacing: -0.03em;
+          text-align: center;
         }
         p {
-          margin: 14px 0 0;
-          color: #aab8b3;
+          margin: 0;
+          color: var(--muted);
           font-size: 14px;
-          line-height: 1.35;
+          line-height: 1.45;
+          text-align: center;
+        }
+        .qr {
+          width: 100%;
+          max-width: 252px;
+          margin: 0 auto;
+          padding: 12px;
+          border-radius: 18px;
+          background: #fff;
+        }
+        img {
+          width: 100%;
+          aspect-ratio: 1;
+          display: block;
+          border-radius: 12px;
+          background: #fff;
         }
         .status {
-          margin-top: 12px;
-          color: #00d98b;
-          font-size: 12px;
+          padding: 10px 12px;
+          border: 1px solid var(--line);
+          border-radius: 12px;
+          font-size: 13px;
+          text-align: center;
+        }
+        button {
+          min-height: 44px;
+          border: 0;
+          border-radius: 12px;
+          background: var(--accent);
+          color: #052316;
+          font-size: 14px;
           font-weight: 700;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
+          cursor: pointer;
+          transition: transform 120ms ease, opacity 120ms ease;
+        }
+        button:hover {
+          transform: translateY(-1px);
+          opacity: 0.96;
+        }
+        .host {
+          color: var(--muted);
+          font-size: 12px;
+          letter-spacing: 0.04em;
         }
       </style>
     </head>
     <body>
       <main>
-        <h1>${APP_NAME}</h1>
-        <img src="${escapeHtml(qrDataUrl)}" alt="QR code for ${escapeHtml(primaryUrl)}">
-        <p>Scan with your phone camera.</p>
-        <p>${escapeHtml(getHostFromUrl(primaryUrl))}</p>
-        <div class="status">${nativeState}</div>
+        <section class="card">
+          <img class="logo" src="${escapeHtml(logoDataUrl)}" alt="${APP_NAME} logo">
+          <h1>${APP_NAME}</h1>
+          <p>${escapeHtml(inputMessage)}</p>
+          <div class="qr">
+            <img src="${escapeHtml(qrDataUrl)}" alt="QR code for ${escapeHtml(primaryUrl)}">
+          </div>
+          <div class="status">${escapeHtml(nativeState)}</div>
+          <button id="openDesktopBtn" type="button">Open Bridge</button>
+          <p class="host">${escapeHtml(hostLabel)}</p>
+        </section>
       </main>
+      <script>
+        const desktopBridgeUrl = ${JSON.stringify(desktopBridgeUrl)};
+        const openDesktopBtn = document.getElementById('openDesktopBtn');
+
+        openDesktopBtn.addEventListener('click', () => {
+          window.linka?.openUrl?.(desktopBridgeUrl);
+        });
+      </script>
     </body>
   </html>`;
+}
+
+async function refreshConnectionWindow() {
+  if (!statusWindow || statusWindow.isDestroyed()) {
+    return;
+  }
+
+  const html = await buildConnectionHtml();
+  statusWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 }
 
 function showConnectionWindow() {
@@ -175,7 +310,9 @@ function showConnectionWindow() {
 
   statusWindow = new BrowserWindow({
     width: 420,
-    height: 430,
+    height: 760,
+    minWidth: 380,
+    minHeight: 720,
     resizable: false,
     title: APP_NAME,
     icon: iconPath,
@@ -187,9 +324,7 @@ function showConnectionWindow() {
   });
 
   statusWindow.setMenu(null);
-  buildConnectionHtml().then((html) => {
-    statusWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-  });
+  refreshConnectionWindow();
   statusWindow.on('closed', () => {
     statusWindow = null;
   });
@@ -354,10 +489,13 @@ if (!gotTheLock) {
       serverInfo = await startServer({
         captureScreen: captureAllScreens,
         getDisplays: getAvailableDisplays,
-        onClientConnected: () => {
-          // ensure we close the window on the main thread
+        onClientConnected: (event) => {
+          lastClientEvent = {
+            ...event,
+            connectedAt: Date.now(),
+          };
           setImmediate(() => {
-            closeConnectionWindow();
+            refreshConnectionWindow();
           });
         },
       });
@@ -374,9 +512,73 @@ if (!gotTheLock) {
       showConnectionWindow();
     }
 
-    if (app.dock) app.dock.hide();
+    // Hermes Linka: register global hotkey Ctrl+Shift+Cmd+L to dump events
+    try {
+      const hermesHotkey = 'CommandOrControl+Shift+Alt+L';
+      const registered = globalShortcut.register(hermesHotkey, async () => {
+        try {
+          console.log('[hermes] Hotkey pressed. Dumping events...');
+          const { execSync } = await import('child_process');
+          const adapter = serverInfo?.inputAdapter;
+          if (!adapter || typeof adapter.dumpEvents !== 'function') {
+            console.warn('[hermes] Input adapter not ready for event dump.');
+            return;
+          }
+          const result = await adapter.dumpEvents();
+
+          // Get foreground app info
+          let appContext = { name: 'unknown', bundleId: null, windowTitle: null };
+          try {
+            appContext.name = execSync(
+              `osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`,
+              { encoding: 'utf8', timeout: 2000 },
+            ).trim();
+            appContext.bundleId =
+              execSync(
+                `osascript -e 'tell application "System Events" to get bundle identifier of first process whose frontmost is true' 2>/dev/null || echo ""`,
+                { encoding: 'utf8', timeout: 2000 },
+              ).trim() || null;
+            appContext.windowTitle =
+              execSync(
+                `osascript -e 'tell application "System Events" to get title of front window of first process whose frontmost is true' 2>/dev/null || echo ""`,
+                { encoding: 'utf8', timeout: 2000 },
+              ).trim() || null;
+          } catch (_e) {
+            /* ignore */
+          }
+
+          const inbox = path.join(os.homedir(), '.hermes', 'linka', 'inbox');
+          fs.mkdirSync(inbox, { recursive: true });
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const filename = `hotkey-${timestamp}-${appContext.name.replace(/[^a-zA-Z0-9]/g, '-')}.json`;
+          const filePath = path.join(inbox, filename);
+          const payload = {
+            captured_at: new Date().toISOString(),
+            source: 'linka-hotkey',
+            app: appContext,
+            ...result,
+          };
+          fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+          console.log(`[hermes] ${result.count} events dumped to ${filePath}`);
+        } catch (error) {
+          console.error('[hermes] Hotkey dump failed:', error);
+        }
+      });
+
+      if (registered) {
+        console.log(`[hermes] Hotkey ${hermesHotkey} registered for event capture.`);
+      } else {
+        console.warn(`[hermes] Hotkey ${hermesHotkey} registration failed (may be in use).`);
+      }
+    } catch (error) {
+      console.warn('[hermes] Could not register hotkey:', error.message);
+    }
   });
 }
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+});
 
 app.on('window-all-closed', (event) => {
   event.preventDefault();

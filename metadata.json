@@ -1,5 +1,5 @@
 {
   "name": "LINKA",
-  "description": "A low-latency local smartphone remote controller and temporary text/image transfer bridge for Windows.",
+  "description": "A low-latency local smartphone remote controller and temporary text/image transfer bridge for Windows and macOS.",
   "requestFramePermissions": []
 }

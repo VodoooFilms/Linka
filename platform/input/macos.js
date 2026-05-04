@@ -34,19 +34,23 @@ function tryBuildHelper() {
   }
 
   ensureHelperDirectory();
-  const result = spawnSync('xcrun', [
-    'swiftc',
-    '-O',
-    '-framework',
-    'ApplicationServices',
-    '-framework',
-    'AppKit',
-    sourcePath,
-    '-o',
-    helperPath,
-  ], {
-    encoding: 'utf8',
-  });
+  const result = spawnSync(
+    'xcrun',
+    [
+      'swiftc',
+      '-O',
+      '-framework',
+      'ApplicationServices',
+      '-framework',
+      'AppKit',
+      sourcePath,
+      '-o',
+      helperPath,
+    ],
+    {
+      encoding: 'utf8',
+    },
+  );
 
   if (result.status !== 0) {
     console.warn('[input:macos] Failed to build native helper.');
@@ -160,6 +164,72 @@ export function createMacOSInputAdapter(onStateChange) {
         helper.kill();
       }
     },
+    // Hermes Linka: dump captured events buffer
+    dumpEvents() {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          responseResolvers.delete('events_dump');
+          resolve({ count: 0, events: [], error: 'timeout' });
+        }, 5000);
+
+        responseResolvers.set('events_dump', (response) => {
+          clearTimeout(timeout);
+          resolve(response);
+        });
+
+        send({ type: 'dump_events' });
+      });
+    },
+    getCaptureStatus() {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          responseResolvers.delete('capture_status');
+          resolve({ active: false, buffer_count: 0 });
+        }, 3000);
+
+        responseResolvers.set('capture_status', (response) => {
+          clearTimeout(timeout);
+          resolve(response);
+        });
+
+        send({ type: 'capture_status' });
+      });
+    },
+    // Hermes Linka: Teach mode — start/stop recording with marker
+    teachStart() {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          responseResolvers.delete('teach_status');
+          resolve({ active: false, buffer_count: 0, error: 'timeout' });
+        }, 5000);
+
+        responseResolvers.set('teach_status', (response) => {
+          clearTimeout(timeout);
+          resolve(response);
+        });
+
+        send({ type: 'teach_start' });
+      });
+    },
+    teachStop() {
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          responseResolvers.delete('teach_events');
+          responseResolvers.delete('_teach_events_meta');
+          responseResolvers.delete('_teach_events_resolve');
+          resolve({ count: 0, events: [], error: 'timeout' });
+        }, 10000);
+
+        responseResolvers.set('teach_events', (response) => {
+          clearTimeout(timeout);
+          // Events come via EVENTS_JSON, stash resolve+meta
+          responseResolvers.set('_teach_events_resolve', resolve);
+          responseResolvers.set('_teach_events_meta', () => response);
+        });
+
+        send({ type: 'teach_stop' });
+      });
+    },
   };
 
   function clampNumber(value, min = -2400, max = 2400) {
@@ -199,11 +269,12 @@ export function createMacOSInputAdapter(onStateChange) {
   function updateStatus(response) {
     permissionGranted = Boolean(response.ready);
     adapter.ready = permissionGranted;
-    stateMessage = typeof response.message === 'string' && response.message
-      ? response.message
-      : permissionGranted
-        ? 'macOS native input is ready.'
-        : 'Accessibility permission is required.';
+    stateMessage =
+      typeof response.message === 'string' && response.message
+        ? response.message
+        : permissionGranted
+          ? 'macOS native input is ready.'
+          : 'Accessibility permission is required.';
 
     adapter.message = stateMessage;
 
@@ -241,6 +312,48 @@ export function createMacOSInputAdapter(onStateChange) {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
+        // Hermes Linka: capture raw EVENTS_JSON payload
+        if (trimmed.startsWith('EVENTS_JSON:')) {
+          const jsonPayload = trimmed.slice('EVENTS_JSON:'.length);
+
+          // Handle teach events (check first since both use EVENTS_JSON)
+          const teachMetaResolver = responseResolvers.get('_teach_events_meta');
+          if (teachMetaResolver) {
+            responseResolvers.delete('_teach_events_meta');
+            const meta = teachMetaResolver();
+            let events = [];
+            try {
+              events = JSON.parse(jsonPayload);
+            } catch (_e) {
+              /* ignore */
+            }
+            const teachResolver = responseResolvers.get('_teach_events_resolve');
+            if (teachResolver) {
+              responseResolvers.delete('_teach_events_resolve');
+              teachResolver({ ...meta, events });
+            }
+            continue;
+          }
+
+          const metaResolver = responseResolvers.get('_events_dump_meta');
+          if (metaResolver) {
+            responseResolvers.delete('_events_dump_meta');
+            const meta = metaResolver();
+            let events = [];
+            try {
+              events = JSON.parse(jsonPayload);
+            } catch (_e) {
+              // ignore parse errors
+            }
+            const eventsResolver = responseResolvers.get('_events_dump_resolve');
+            if (eventsResolver) {
+              responseResolvers.delete('_events_dump_resolve');
+              eventsResolver({ ...meta, events });
+            }
+          }
+          continue;
+        }
+
         try {
           const response = JSON.parse(trimmed);
           if (response.type === 'status') {
@@ -250,6 +363,34 @@ export function createMacOSInputAdapter(onStateChange) {
             if (resolver) {
               responseResolvers.delete('volume_state');
               resolver(response);
+            }
+          } else if (response.type === 'events_dump') {
+            // Hermes Linka: events dump response — also capture EVENTS_JSON line
+            const resolver = responseResolvers.get('events_dump');
+            if (resolver) {
+              responseResolvers.delete('events_dump');
+              // The actual event array comes on the next line as EVENTS_JSON:...
+              // Stash the resolve callback and the metadata
+              responseResolvers.set('_events_dump_resolve', resolver);
+              responseResolvers.set('_events_dump_meta', () => response);
+            }
+          } else if (response.type === 'capture_status') {
+            const resolver = responseResolvers.get('capture_status');
+            if (resolver) {
+              responseResolvers.delete('capture_status');
+              resolver(response);
+            }
+          } else if (response.type === 'teach_status') {
+            const resolver = responseResolvers.get('teach_status');
+            if (resolver) {
+              responseResolvers.delete('teach_status');
+              resolver(response);
+            }
+          } else if (response.type === 'teach_events') {
+            const resolver = responseResolvers.get('teach_events');
+            if (resolver) {
+              responseResolvers.delete('teach_events');
+              resolver(response); // sets _teach_events_resolve and _teach_events_meta for EVENTS_JSON
             }
           } else if (response.type === 'error') {
             if (response.code === 'accessibility_permission_missing') {

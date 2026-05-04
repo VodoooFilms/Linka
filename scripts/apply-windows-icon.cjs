@@ -5,9 +5,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const iconPath = path.join(root, 'build', 'linka-icon.ico');
 const rceditPath = path.join(root, 'node_modules', 'electron-winstaller', 'vendor', 'rcedit.exe');
-const targets = [
-  path.join(root, 'dist_electron', 'win-unpacked', 'Linka.exe'),
-];
+const targets = [path.join(root, 'dist_electron', 'win-unpacked', 'Linka.exe')];
 
 if (process.platform !== 'win32') {
   process.exit(0);

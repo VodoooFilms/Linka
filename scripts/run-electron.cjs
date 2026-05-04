@@ -38,7 +38,9 @@ function resolveElectronBinary() {
   const expectedFragment = path.normalize(getExpectedElectronPathFragment(os.platform()));
 
   if (!normalized.includes(expectedFragment)) {
-    printRepairGuidance(`Electron resolved to an unexpected executable for ${os.platform()}: ${normalized}`);
+    printRepairGuidance(
+      `Electron resolved to an unexpected executable for ${os.platform()}: ${normalized}`,
+    );
     process.exit(1);
   }
 

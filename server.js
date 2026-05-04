@@ -19,6 +19,7 @@ const RECONNECT_TOKEN_BYTES = 32;
 const MAX_RECONNECT_TOKENS = 24;
 const FAVICON_PATH = path.join(__dirname, 'build', 'linka-icon.ico');
 const WEB_ICON_PATH = path.join(__dirname, 'build', 'linka-logo.png');
+const HERMES_INBOX = path.join(os.homedir(), '.hermes', 'linka', 'inbox');
 let loggingReady = false;
 let bridgeMessages = [];
 
@@ -179,6 +180,92 @@ function preventBrowserCache(_req, res, next) {
   next();
 }
 
+function generateTeachSkill(name, events, app, hasScreenshot = false, windowBounds = null) {
+  const now = new Date().toISOString();
+  const appName = app?.name || 'unknown';
+  const prefix = name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+
+  const steps = events
+    .map((e, i) => {
+      const ts = new Date(e.ts * 1000).toISOString().slice(11, 23);
+      const mods = e.modifiers?.length ? e.modifiers.join('+') + '+' : '';
+      switch (e.type) {
+        case 'mouse_moved':
+          return `${i + 1}. [${ts}] Move mouse to (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
+        case 'left_down':
+          return `${i + 1}. [${ts}] Left click down at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
+        case 'left_up':
+          return `${i + 1}. [${ts}] Left click up at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
+        case 'right_down':
+          return `${i + 1}. [${ts}] Right click down at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
+        case 'right_up':
+          return `${i + 1}. [${ts}] Right click up at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
+        case 'scroll':
+          return `${i + 1}. [${ts}] Scroll ${e.dy > 0 ? 'down' : 'up'} by ${Math.abs(e.dy || 0)}px`;
+        case 'key_combo':
+          return `${i + 1}. [${ts}] Press ${mods}${e.key || '?'}`;
+        case 'mouse_drag':
+          return `${i + 1}. [${ts}] Drag to (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
+        default:
+          return `${i + 1}. [${ts}] ${e.type}`;
+      }
+    })
+    .join('\n');
+
+  const stepCount = events.length;
+
+  const appContext = appName !== 'unknown'
+    ? `in **${appName}**`
+    : `on macOS`;
+
+  const screenshotSection = hasScreenshot
+    ? `\n## 📸 Reference Screenshot\n\n\`~/.hermes/skills/linka/${prefix}.png\` — captured at recording time. Use with \`vision_analyze\` to locate UI elements when the window has moved.\n\n**Usage:** \`vision_analyze(image_url="~/.hermes/skills/linka/${prefix}.png", question="Describe the UI elements visible at each click coordinate")\`\n`
+    : '';
+
+  const windowSection = windowBounds
+    ? `\n## 🪟 Window Position (at recording)\n\n- **App:** ${appName}\n- **Position:** (${windowBounds.x}, ${windowBounds.y})\n- **Size:** ${windowBounds.width}×${windowBounds.height}\n\nTo replay after the window moved:\n1. Get current window position via AppleScript: \`osascript -e 'tell application "System Events" to get position of front window of first process whose frontmost is true'\`\n2. Calculate offset: \`offsetX = currentX - ${windowBounds.x}\`, \`offsetY = currentY - ${windowBounds.y}\`\n3. Adjust all click coordinates: \`newX = recordedX + offsetX\`, \`newY = recordedY + offsetY\`\n`
+    : '';
+
+  return `---
+name: ${prefix}
+description: Auto-generated from Linka Teach — recorded from ${appName} on ${now.slice(0, 10)}
+version: 1.0.0
+app: ${appName}
+events: ${stepCount}
+screenshot: ${hasScreenshot}
+windowBounds: ${windowBounds ? JSON.stringify(windowBounds) : 'null'}
+---
+
+# ${name}
+
+Workflow recorded ${appContext} on ${now.slice(0, 10)} (${stepCount} events).
+
+## Steps
+
+${steps}
+${screenshotSection}${windowSection}
+## 🤖 Hermes Usage
+
+To replay this workflow:
+
+1. Open **${appName}** and bring it to the foreground.
+2. Take a current screenshot via Linka bridge_capture_request or \`screencapture\` CLI.
+3. Use \`vision_analyze\` with the reference screenshot to locate each click target on the current screen. Recalculate coordinates if the window moved.
+4. Execute each click at the adjusted coordinates using CGEvent at \`.cghidEventTap\` (Quartz-space, origin bottom-left).
+5. Insert a 300-500ms delay between clicks for UI responsiveness.
+6. Use \`vision_analyze\` as a double-check: after each click, verify the expected UI change (button highlight, new panel, text appearing). If the result doesn't match the reference, pause and ask the user.
+7. Use OCR via \`vision_analyze\` on the current screen to confirm you're clicking the right button/label — cross-reference with the reference screenshot's visible text.
+
+**Replay command:** screenshot → compare → recalculate → click → verify. Repeat for each step.
+
+## Raw Events
+
+\`\`\`json
+${JSON.stringify(events, null, 2)}
+\`\`\`
+`;
+}
+
 function normalizeNumber(value, fallback = 0, min = -500, max = 500) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -259,17 +346,18 @@ function normalizeBridgeMessage(message) {
 
 export async function startServer(options = {}) {
   setupFileLogging();
-  const PORT = Number(options.port || resolveDefaultPort());
-  const port = PORT;
+  const requestedPort = Number(options.port ?? resolveDefaultPort());
+  let port = requestedPort;
   const onClientConnected =
     typeof options.onClientConnected === 'function' ? options.onClientConnected : null;
   const captureScreen = typeof options.captureScreen === 'function' ? options.captureScreen : null;
   const getDisplays = typeof options.getDisplays === 'function' ? options.getDisplays : null;
+  const captureAvailable = Boolean(captureScreen);
   const app = express();
   const server = createHttpServer(app);
   const wss = new WebSocketServer({ server, maxPayload: WS_MAX_PAYLOAD_BYTES });
   const clients = new Set();
-  const connectionInfo = getConnectionInfo(port);
+  let connectionInfo = getConnectionInfo(port);
   let activeSessionId = createSessionId();
   let activePairingToken = createSecretToken();
   let reconnectTokens = new Map();
@@ -335,6 +423,7 @@ export async function startServer(options = {}) {
         payload: {
           inputBackend: input.name,
           nativeInputReady: input.ready,
+          bridgeCaptureAvailable: captureAvailable,
           permissionMissing: state.permissionMissing,
           message: state.message,
         },
@@ -637,6 +726,74 @@ export async function startServer(options = {}) {
     });
   });
 
+  // Hermes Linka: endpoint for Hermes to query captured GUI events
+  app.get('/hermes/events', async (_req, res) => {
+    try {
+      if (typeof input.dumpEvents !== 'function') {
+        res.status(501).json({ error: 'Event capture not available on this platform.' });
+        return;
+      }
+      const result = await input.dumpEvents();
+      fs.mkdirSync(HERMES_INBOX, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `manual-${timestamp}.json`;
+      const filePath = path.join(HERMES_INBOX, filename);
+      const appContext = await getForegroundAppInfo();
+      const payload = {
+        captured_at: new Date().toISOString(),
+        source: 'linka-http-endpoint',
+        app: appContext,
+        ...result,
+      };
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+      console.log(`[hermes] Events dumped to ${filePath} (${result.count} events)`);
+      res.json({ success: true, path: filePath, count: result.count });
+    } catch (error) {
+      console.error('[hermes] Event dump failed:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Helper: get foreground app info via AppleScript
+  async function getForegroundAppInfo() {
+    try {
+      const { execSync } = await import('child_process');
+      const name = execSync(
+        `osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`,
+        { encoding: 'utf8', timeout: 3000 },
+      ).trim();
+      const bundleId = execSync(
+        `osascript -e 'tell application "System Events" to get bundle identifier of first process whose frontmost is true' 2>/dev/null || echo ""`,
+        { encoding: 'utf8', timeout: 3000 },
+      ).trim();
+      const windowTitle = execSync(
+        `osascript -e 'tell application "System Events" to get title of front window of first process whose frontmost is true' 2>/dev/null || echo ""`,
+        { encoding: 'utf8', timeout: 3000 },
+      ).trim();
+      return { name, bundleId: bundleId || null, windowTitle: windowTitle || null };
+    } catch {
+      return { name: 'unknown', bundleId: null, windowTitle: null };
+    }
+  }
+
+  // Phase 2.5: Get front window position/size for coordinate offset on replay
+  async function getWindowBounds() {
+    try {
+      const { execSync } = await import('child_process');
+      // macOS 15+ AppleScript has a bug where `item N of position` returns
+      // "N, " (trailing comma+space), breaking string concatenation.
+      // Use Swift via Process instead for reliable bounds extraction.
+      const swiftCmd = 'swift -e \'import AppKit;let a=NSWorkspace.shared.frontmostApplication!;let l=CGWindowListCopyWindowInfo([.optionOnScreenOnly],kCGNullWindowID) as![[String:Any]];for w in l{if(w["kCGWindowOwnerPID"]as!Int)==a.processIdentifier,let b=w["kCGWindowBounds"]as?[String:Double]{print("\\(b["X"]!),\\(b["Y"]!),\\(b["Width"]!),\\(b["Height"]!)");break}}\'';
+      const result = execSync(swiftCmd, { encoding: 'utf8', timeout: 5000 }).trim();
+      if (!result) return null;
+      const [x, y, w, h] = result.split(',').map(Number);
+      if ([x, y, w, h].some(isNaN)) return null;
+      return { x, y, width: w, height: h };
+    } catch {
+      return null;
+    }
+  }
+
   if (process.env.NODE_ENV === 'production') {
     const staticRoot = path.join(__dirname, 'dist');
     console.log(`[static] Serving production files from ${staticRoot}`);
@@ -681,6 +838,7 @@ export async function startServer(options = {}) {
       authRequired: true,
       inputBackend: input.name,
       nativeInputReady: input.ready,
+      bridgeCaptureAvailable: captureAvailable,
       permissionMissing: input.permissionMissing,
       message: input.message,
     });
@@ -724,9 +882,112 @@ export async function startServer(options = {}) {
           return;
         }
 
+        // Auto-authenticate localhost connections (same machine).
+        // The browser at localhost:3067 doesn't have the QR code's
+        // sessionId/pairingToken, but it's on the same box — it IS
+        // the desktop app's own UI. Grant it full access.
+        const remoteAddr = req.socket.remoteAddress || '';
+        const isLocalhost = remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
+        if (!ws._authenticated && isLocalhost) {
+          authenticateSocket(ws, 'local');
+          sendJson(ws, {
+            type: 'auth_ok',
+            sessionId: activeSessionId,
+            reconnectToken: issueReconnectToken({ mode: 'local', remoteAddress: remoteAddr }),
+          });
+          console.log(`[ws] Auto-authenticated localhost client from ${remoteAddr}`);
+        }
+
         if (!ws._authenticated) {
           sendJson(ws, { type: 'auth_error', reason: 'auth_required' });
           ws.close(4401, 'Authentication required');
+          return;
+        }
+
+        // Hermes Linka: Teach mode — start/stop recording
+        if (data.type === 'teach_start') {
+          if (typeof input.teachStart === 'function') {
+            try {
+              const status = await input.teachStart();
+              // Phase 2: Capture reference screenshot and window bounds
+              if (captureScreen && typeof captureScreen === 'function') {
+                try {
+                  ws._teachScreenshot = await captureScreen();
+                  console.log('[teach] Reference screenshot captured.');
+                } catch (err) {
+                  console.warn('[teach] Screenshot capture failed:', err?.message || err);
+                  ws._teachScreenshot = null;
+                }
+              }
+              ws._teachWindowBounds = await getWindowBounds();
+              if (ws._teachWindowBounds) {
+                console.log(`[teach] Window bounds: ${ws._teachWindowBounds.x},${ws._teachWindowBounds.y} ${ws._teachWindowBounds.width}x${ws._teachWindowBounds.height}`);
+              }
+              sendJson(ws, { event: 'teach_status', payload: status });
+            } catch (error) {
+              sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
+            }
+          } else {
+            sendJson(ws, {
+              event: 'teach_error',
+              payload: { message: 'Teach not available on this platform.' },
+            });
+          }
+          return;
+        }
+        if (data.type === 'teach_stop') {
+          if (typeof input.teachStop === 'function') {
+            try {
+              const result = await input.teachStop();
+              sendJson(ws, { event: 'teach_events', payload: result });
+            } catch (error) {
+              sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
+            }
+          } else {
+            sendJson(ws, {
+              event: 'teach_error',
+              payload: { message: 'Teach not available on this platform.' },
+            });
+          }
+          return;
+        }
+
+        // Hermes Linka: save recorded workflow as a skill
+        if (data.event === 'teach_save') {
+          const { name, events, app } = data.payload || {};
+          if (!name || !Array.isArray(events)) {
+            sendJson(ws, { event: 'teach_error', payload: { message: 'Missing name or events.' } });
+            return;
+          }
+          try {
+            const skillDir = path.join(os.homedir(), '.hermes', 'skills', 'linka');
+            fs.mkdirSync(skillDir, { recursive: true });
+            const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+            const filePath = path.join(skillDir, `${safeName}.md`);
+
+            // Phase 2: Save reference screenshot alongside skill
+            let hasScreenshot = false;
+            const screenshot = ws._teachScreenshot;
+            if (screenshot && typeof screenshot === 'string' && screenshot.startsWith('data:image/')) {
+              try {
+                const screenshotPath = path.join(skillDir, `${safeName}.png`);
+                const base64Data = screenshot.replace(/^data:image\/\w+;base64,/, '');
+                fs.writeFileSync(screenshotPath, Buffer.from(base64Data, 'base64'));
+                hasScreenshot = true;
+                console.log(`[teach] Screenshot saved: ${screenshotPath}`);
+              } catch (_) { /* non-fatal */ }
+            }
+            delete ws._teachScreenshot;
+
+            const content = generateTeachSkill(name, events, app || {}, hasScreenshot, ws._teachWindowBounds);
+            delete ws._teachWindowBounds;
+            fs.writeFileSync(filePath, content);
+            console.log(`[teach] Skill saved: ${filePath}`);
+            sendJson(ws, { event: 'teach_saved', payload: { name: safeName, path: filePath, hasScreenshot } });
+          } catch (error) {
+            console.error('[teach] Save failed:', error);
+            sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
+          }
           return;
         }
 
@@ -774,6 +1035,12 @@ export async function startServer(options = {}) {
     server.listen(port, BIND_HOST, resolve);
   });
 
+  const serverAddress = server.address();
+  if (serverAddress && typeof serverAddress === 'object' && typeof serverAddress.port === 'number') {
+    port = serverAddress.port;
+    connectionInfo = getConnectionInfo(port);
+  }
+
   console.log(`[net] Bind address: ${connectionInfo.bindHost}:${port}`);
   console.log(`[net] Recommended phone URL: ${connectionInfo.primaryUrl}`);
   console.log(`[net] Pairing URL: ${getSessionSnapshot().pairingUrl}`);
@@ -795,6 +1062,9 @@ export async function startServer(options = {}) {
     candidates: connectionInfo.candidates,
     inputBackend: input.name,
     nativeInputReady: input.ready,
+    bridgeCaptureAvailable: captureAvailable,
+    // Hermes Linka: expose the input adapter for event capture
+    inputAdapter: input,
     resetPairing: () => {
       const session = resetPairing();
       return session;
