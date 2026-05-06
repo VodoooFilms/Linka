@@ -130,6 +130,9 @@ private var eventBuffer = EventBuffer()
 private var captureActive = false
 private var eventTap: CFMachPort?
 private var teachMarker: Double? = nil
+private var teachAppName: String? = nil    // frontmost app when teach started
+private var teachAppHistory: [(app: String, ts: Double)] = []  // all apps used during teach
+private var teachAppTimer: DispatchSourceTimer? = nil           // 1s sampler
 
 private func modifierNames(from flags: CGEventFlags) -> [String] {
     var names: [String] = []
@@ -197,18 +200,34 @@ private func captureEventCallback(
         )
 
     case .keyDown:
-        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let rawKeyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let keyCode = CGKeyCode(rawKeyCode)
         let flags = event.flags
         let mods = modifierNames(from: flags)
-        // Capture key combos or special keys. During teach mode, capture ALL keystrokes.
-        if teachMarker != nil || !mods.isEmpty || isSpecialKey(keyCode) {
-            let keyName = keyNameMap[keyCode] ?? String(format: "0x%02X", keyCode)
-            captured = CapturedEvent(
-                ts: now, type: "key_combo",
-                x: nil, y: nil,
-                key: keyName, modifiers: mods.isEmpty ? nil : mods, dy: nil
-            )
+
+        // When virtualKey is 0 (postText sends Unicode via keyboardSetUnicodeString),
+        // extract the actual character instead of returning "a" (keyCode 0x00).
+        var keyName: String
+        if keyCode == 0 {
+            var unicodeLength: Int = 0
+            var unicodeChars = [UniChar](repeating: 0, count: 8)
+            event.keyboardGetUnicodeString(maxStringLength: 8,
+                                           actualStringLength: &unicodeLength,
+                                           unicodeString: &unicodeChars)
+            if unicodeLength > 0 {
+                keyName = String(utf16CodeUnits: unicodeChars, count: unicodeLength)
+            } else {
+                keyName = keyNameMap[keyCode] ?? String(format: "0x%02X", keyCode)
+            }
+        } else {
+            keyName = keyNameMap[keyCode] ?? String(format: "0x%02X", keyCode)
         }
+
+        captured = CapturedEvent(
+            ts: now, type: "key_combo",
+            x: nil, y: nil,
+            key: keyName, modifiers: mods.isEmpty ? nil : mods, dy: nil
+        )
 
     case .leftMouseDragged:
         captured = CapturedEvent(
@@ -615,6 +634,51 @@ private func postScroll(dy: Int) throws {
     event.post(tap: .cghidEventTap)
 }
 
+private func keyCodeForUnicodeChar(_ char: UniChar) -> CGKeyCode? {
+    // Map common ASCII to keyCodes so CGEventTap captures meaningful keys (not 0).
+    switch char {
+    // Lowercase a-z
+    case 0x61: return 0x00; case 0x73: return 0x01; case 0x64: return 0x02
+    case 0x66: return 0x03; case 0x68: return 0x04; case 0x67: return 0x05
+    case 0x7A: return 0x06; case 0x78: return 0x07; case 0x63: return 0x08
+    case 0x76: return 0x09; case 0x62: return 0x0B; case 0x71: return 0x0C
+    case 0x77: return 0x0D; case 0x65: return 0x0E; case 0x72: return 0x0F
+    case 0x79: return 0x10; case 0x74: return 0x11; case 0x6F: return 0x1F
+    case 0x75: return 0x20; case 0x69: return 0x22; case 0x70: return 0x23
+    case 0x6C: return 0x25; case 0x6A: return 0x26; case 0x6B: return 0x28
+    case 0x6E: return 0x2D; case 0x6D: return 0x2E
+    // Uppercase A-Z (same keyCodes, shift handled by keyboardSetUnicodeString)
+    case 0x41: return 0x00; case 0x53: return 0x01; case 0x44: return 0x02
+    case 0x46: return 0x03; case 0x48: return 0x04; case 0x47: return 0x05
+    case 0x5A: return 0x06; case 0x58: return 0x07; case 0x43: return 0x08
+    case 0x56: return 0x09; case 0x42: return 0x0B; case 0x51: return 0x0C
+    case 0x57: return 0x0D; case 0x45: return 0x0E; case 0x52: return 0x0F
+    case 0x59: return 0x10; case 0x54: return 0x11; case 0x4F: return 0x1F
+    case 0x55: return 0x20; case 0x49: return 0x22; case 0x50: return 0x23
+    case 0x4C: return 0x25; case 0x4A: return 0x26; case 0x4B: return 0x28
+    case 0x4E: return 0x2D; case 0x4D: return 0x2E
+    // Digits + common symbols
+    case 0x31: return 0x12; case 0x32: return 0x13; case 0x33: return 0x14
+    case 0x34: return 0x15; case 0x35: return 0x17; case 0x36: return 0x16
+    case 0x37: return 0x1A; case 0x38: return 0x1C; case 0x39: return 0x19
+    case 0x30: return 0x1D  // 0
+    case 0x20: return 0x31  // space
+    case 0x2E: return 0x2F  // .
+    case 0x2C: return 0x2B  // ,
+    case 0x2D: return 0x1B  // -
+    case 0x3D: return 0x18  // =
+    case 0x3B: return 0x29  // ;
+    case 0x2F: return 0x2C  // /
+    case 0x27: return 0x27  // '
+    case 0x5B: return 0x21  // [
+    case 0x5D: return 0x1E  // ]
+    case 0x5C: return 0x2A  // \
+    case 0x0A: return 0x24  // \n → return
+    case 0x09: return 0x30  // \t → tab
+    default: return nil
+    }
+}
+
 private func postText(_ text: String) throws {
     try requireAccessibility()
     guard !text.isEmpty else {
@@ -623,8 +687,10 @@ private func postText(_ text: String) throws {
 
     for scalar in text.utf16 {
         var character = UniChar(scalar)
-        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-              let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
+        // Use real keyCode when mappable (so CGEventTap captures meaningful keys)
+        let vk = keyCodeForUnicodeChar(character) ?? 0
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: vk, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: vk, keyDown: false) else {
             continue
         }
 
@@ -904,12 +970,36 @@ private func handle(_ json: [String: Any]) {
         // --- Hermes Linka Teach mode ---
         case "teach_start":
             teachMarker = Date().timeIntervalSince1970
+            // Capture frontmost app name for skill context
+            if let frontApp = NSWorkspace.shared.frontmostApplication {
+                teachAppName = frontApp.localizedName ?? nil
+            }
+            // Start app-history sampler (1s interval)
+            teachAppHistory = []
+            if let name = teachAppName {
+                teachAppHistory.append((app: name, ts: teachMarker!))
+            }
+            teachAppTimer = DispatchSource.makeTimerSource(queue: .main)
+            teachAppTimer?.schedule(deadline: .now() + 1.0, repeating: 1.0)
+            teachAppTimer?.setEventHandler { [weak teachAppTimer] in
+                guard teachAppTimer != nil else { return }
+                let now = Date().timeIntervalSince1970
+                if let frontApp = NSWorkspace.shared.frontmostApplication,
+                   let currentName = frontApp.localizedName {
+                    if let last = teachAppHistory.last, last.app != currentName {
+                        teachAppHistory.append((app: currentName, ts: now))
+                    }
+                }
+            }
+            teachAppTimer?.resume()
+
             let currentCount = eventBuffer.dump().count
             writeJson([
                 "type": "teach_status",
                 "active": true,
                 "marker_ts": teachMarker!,
                 "buffer_count": currentCount,
+                "app_name": teachAppName ?? NSNull(),
                 "message": currentCount > 0
                     ? "Teach recording started."
                     : "WARNING: Event buffer is empty. Check Accessibility permission.",
@@ -920,9 +1010,17 @@ private func handle(_ json: [String: Any]) {
                 writeError("No teach recording in progress.", code: "teach_not_active")
                 break
             }
+            // Stop app-history timer
+            teachAppTimer?.cancel()
+            teachAppTimer = nil
+
             let allEvents = eventBuffer.dump()
             let recorded = allEvents.filter { $0.ts >= marker }
             teachMarker = nil
+
+            // Build app_history array for JSON
+            let appHistoryJson = teachAppHistory.map { ["app": $0.app, "ts": $0.ts] }
+            teachAppHistory = []
 
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -936,7 +1034,10 @@ private func handle(_ json: [String: Any]) {
                 "type": "teach_events",
                 "count": recorded.count,
                 "marker_ts": marker,
+                "app_name": teachAppName ?? NSNull(),
+                "app_history": appHistoryJson,
             ])
+            teachAppName = nil
 
             outputQueue.sync {
                 let payload = "EVENTS_JSON:\(jsonString.replacingOccurrences(of: "\n", with: ""))\n"

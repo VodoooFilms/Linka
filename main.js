@@ -21,7 +21,7 @@ import {
   configurePlatformAutoStart,
   getPlatformTrayIconPath,
 } from './platform/desktop.js';
-import { startServer } from './server.js';
+import { getForegroundAppInfo, startServer } from './server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -518,7 +518,6 @@ if (!gotTheLock) {
       const registered = globalShortcut.register(hermesHotkey, async () => {
         try {
           console.log('[hermes] Hotkey pressed. Dumping events...');
-          const { execSync } = await import('child_process');
           const adapter = serverInfo?.inputAdapter;
           if (!adapter || typeof adapter.dumpEvents !== 'function') {
             console.warn('[hermes] Input adapter not ready for event dump.');
@@ -526,23 +525,10 @@ if (!gotTheLock) {
           }
           const result = await adapter.dumpEvents();
 
-          // Get foreground app info
+          // Get foreground app info via shared helper (single AppleScript call)
           let appContext = { name: 'unknown', bundleId: null, windowTitle: null };
           try {
-            appContext.name = execSync(
-              `osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`,
-              { encoding: 'utf8', timeout: 2000 },
-            ).trim();
-            appContext.bundleId =
-              execSync(
-                `osascript -e 'tell application "System Events" to get bundle identifier of first process whose frontmost is true' 2>/dev/null || echo ""`,
-                { encoding: 'utf8', timeout: 2000 },
-              ).trim() || null;
-            appContext.windowTitle =
-              execSync(
-                `osascript -e 'tell application "System Events" to get title of front window of first process whose frontmost is true' 2>/dev/null || echo ""`,
-                { encoding: 'utf8', timeout: 2000 },
-              ).trim() || null;
+            appContext = await getForegroundAppInfo();
           } catch (_e) {
             /* ignore */
           }

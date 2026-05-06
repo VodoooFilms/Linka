@@ -68,6 +68,9 @@
         background:
           linear-gradient(90deg, rgba(0, 217, 139, 0.06), transparent 28%),
           linear-gradient(270deg, rgba(117, 167, 255, 0.06), transparent 32%), var(--bg);
+        /* Shift up when virtual keyboard pushes viewport (iOS/Android) */
+        transform: translateY(calc(-1 * var(--app-keyboard-offset, 0px)));
+        transition: transform 0.15s ease-out;
       }
 
       .app.keyboard-open {
@@ -140,6 +143,28 @@
 
       .status[data-state='connecting'] .status-dot {
         background: #f0bf4f;
+      }
+
+      .teach-indicator {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #ff6b6b;
+        animation: teach-pulse 1.2s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      .teach-indicator.visible {
+        display: inline-flex;
+      }
+
+      @keyframes teach-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
       }
 
       .status[data-state='connected'] {
@@ -1187,7 +1212,15 @@
           <button id="keyboardBtn" class="keyboard-button top-button" type="button">
             Keyboard
           </button>
-          <button id="muteBtn" class="mute-button top-button" type="button">Mute</button>
+          <button
+            id="teachBtn"
+            class="key-button top-button"
+            type="button"
+            aria-label="Teach recording"
+            title="Record workflow"
+          >
+            Teach
+          </button>
           <button id="bridgeBtn" class="key-button top-button" type="button">Bridge</button>
         </div>
         <button
@@ -1211,19 +1244,12 @@
         <div id="status" class="status" data-state="connecting">
           <span class="status-dot"></span><span id="statusText">Connecting</span>
         </div>
+        <span id="teachIndicator" class="teach-indicator" aria-hidden="true">⏺ Recording</span>
       </header>
 
       <div id="keyboardTools" class="keyboard-tools" aria-label="Keyboard shortcuts">
         <button id="ctrlBtn" class="key-button" type="button" data-modifier="ctrl">Ctrl</button>
-        <button
-          id="teachBtn"
-          class="key-button"
-          type="button"
-          aria-label="Teach recording"
-          title="Record workflow"
-        >
-          🎓
-        </button>
+        <button id="muteBtn" class="mute-button key-button" type="button">Mute</button>
         <button class="key-button" type="button" data-key="escape">Esc</button>
         <button class="key-button" type="button" data-key="tab">Tab</button>
       </div>
@@ -1409,6 +1435,19 @@
             ✓
           </button>
         </div>
+        <label class="teach-modal-label" for="teachAppSelect" style="margin-top:12px">App used</label>
+        <select id="teachAppSelect" class="teach-modal-input" style="width:100%;margin-bottom:8px">
+          <option value="">(auto-detect)</option>
+        </select>
+        <label class="teach-modal-label" for="teachUserPrompt">What did you do? (optional)</label>
+        <textarea
+          id="teachUserPrompt"
+          class="teach-modal-input"
+          placeholder="e.g. Write 'amigos' in TextEdit"
+          rows="2"
+          maxlength="200"
+          style="width:100%;resize:none;margin-top:4px"
+        ></textarea>
       </div>
     </div>
 
@@ -1476,6 +1515,9 @@
       const teachNameInput = document.getElementById('teachNameInput');
       const teachSaveBtn = document.getElementById('teachSaveBtn');
       const teachCancelBtn = document.getElementById('teachCancelBtn');
+      const teachAppSelect = document.getElementById('teachAppSelect');
+      const teachUserPrompt = document.getElementById('teachUserPrompt');
+      const teachIndicator = document.getElementById('teachIndicator');
 
       const SENSITIVITY = 1.45;
       const SCROLL_SENSITIVITY = 0.65;
@@ -1506,6 +1548,7 @@
       let bridgeMessages = [];
       let selectedDisplayId = null;
       let teachRecording = false;
+      let teachPendingPayload = null;  // stash teach_events payload for save
       let pendingPairingParams = readPairingParamsFromUrl();
       let manualDisconnect = false;
 
@@ -1728,8 +1771,18 @@
       }
 
       function syncViewportHeight() {
-        const height = window.visualViewport?.height || window.innerHeight;
+        const vv = window.visualViewport;
+        const height = vv?.height || window.innerHeight;
         document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+
+        // Compensate for virtual keyboard pushing viewport up (iOS/Android)
+        if (vv && vv.height < window.innerHeight - 60) {
+          // Keyboard is open — shift .app up so bottom content stays visible
+          const offset = vv.offsetTop || 0;
+          document.documentElement.style.setProperty('--app-keyboard-offset', `${Math.round(offset)}px`);
+        } else {
+          document.documentElement.style.setProperty('--app-keyboard-offset', '0px');
+        }
       }
 
       function setStatus(state, label) {
@@ -1925,32 +1978,58 @@
               if (events.length === 0) {
                 teachRecording = false;
                 teachBtn.classList.remove('active');
-                teachBtn.textContent = '🎓';
+                teachBtn.textContent = 'Teach';
+                teachIndicator.classList.remove('visible');
                 showClientError('No actions recorded. Try again with more activity.');
                 return;
               }
-              const name = window.prompt('Skill name for this workflow:');
-              if (!name || !name.trim()) {
-                teachRecording = false;
-                teachBtn.classList.remove('active');
-                teachBtn.textContent = '🎓';
-                return;
+              // Populate app selector from app_history
+              const appHistory = data.payload?.app_history || [];
+              teachAppSelect.innerHTML = '<option value="">(auto-detect)</option>';
+              const seen = new Set();
+              for (const entry of appHistory) {
+                if (entry && entry.app && !seen.has(entry.app)) {
+                  seen.add(entry.app);
+                  const opt = document.createElement('option');
+                  opt.value = entry.app;
+                  opt.textContent = entry.app;
+                  teachAppSelect.appendChild(opt);
+                }
               }
-              send({
-                event: 'teach_save',
-                payload: { name: name.trim(), events, app: data.payload },
-              });
+              // Auto-select last non-Linka app
+              const LINK_LIKE = ['linka', 'safari', 'firefox', 'google chrome', 'arc', 'brave', 'opera', 'edge'];
+              for (let i = appHistory.length - 1; i >= 0; i--) {
+                const app = appHistory[i]?.app;
+                if (app && !LINK_LIKE.includes(app.toLowerCase())) {
+                  teachAppSelect.value = app;
+                  break;
+                }
+              }
+              // Show modal
+              teachIndicator.classList.remove('visible');
+              teachPendingPayload = data.payload;
+              teachNameInput.value = '';
+              teachUserPrompt.value = '';
+              teachModal.setAttribute('aria-hidden', 'false');
+              teachModal.classList.add('visible');
+              teachNameInput.focus();
             } else if (data.event === 'teach_saved') {
-              teachBtn.textContent = '✅';
-              setTimeout(() => {
-                teachBtn.textContent = '🎓';
-              }, 2500);
+              teachBtn.textContent = 'Teach';
+              teachIndicator.classList.remove('visible');
+              teachModal.classList.remove('visible');
+              teachModal.setAttribute('aria-hidden', 'true');
+              teachPendingPayload = null;
             } else if (data.event === 'teach_error') {
               teachRecording = false;
               teachBtn.classList.remove('active');
-              teachBtn.textContent = '🎓';
+              teachBtn.textContent = 'Teach';
+              teachIndicator.classList.remove('visible');
+              teachModal.classList.remove('visible');
+              teachModal.setAttribute('aria-hidden', 'true');
+              teachPendingPayload = null;
               showClientError('Teach failed: ' + (data.payload?.message || 'unknown'));
             } else if (data.event === 'teach_status') {
+              teachIndicator.classList.add('visible');
               if (data.payload?.buffer_count === 0) {
                 showClientError(
                   'Event capture may not be active. Check Accessibility permission for Linka in System Settings.',
@@ -2322,6 +2401,13 @@
         setBridgeOpen(getRequestedPanelFromUrl() === 'bridge');
       });
 
+      // Scroll bridge input into view when focused (virtual keyboard opens)
+      bridgeInput.addEventListener('focus', () => {
+        setTimeout(() => {
+          bridgeInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }, 350); // wait for keyboard animation
+      });
+
       function setKeyboardOpen(open) {
         keyboardOpen = Boolean(open);
         appEl.classList.toggle('keyboard-open', keyboardOpen);
@@ -2381,14 +2467,55 @@
           send({ type: 'teach_start' });
           teachRecording = true;
           teachBtn.classList.add('active');
-          teachBtn.textContent = '⏺';
+          teachBtn.textContent = 'Stop';
           clearClientError();
         } else {
           // Stop immediately in UI, server response comes async
           teachRecording = false;
           teachBtn.classList.remove('active');
-          teachBtn.textContent = '🎓';
+          teachBtn.textContent = 'Teach';
+          teachIndicator.classList.remove('visible');
           send({ type: 'teach_stop' });
+        }
+      });
+
+      // Modal save: build payload with user selections
+      teachSaveBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        const name = teachNameInput.value.trim();
+        if (!name) return;
+        if (!teachPendingPayload) return;
+
+        const payload = {
+          name,
+          events: teachPendingPayload.events || [],
+          app: teachPendingPayload,
+          app_name: teachPendingPayload.app_name,
+          app_history: teachPendingPayload.app_history || [],
+          user_prompt: teachUserPrompt.value.trim() || null,
+        };
+
+        // If user selected a specific app, override with that
+        if (teachAppSelect.value) {
+          payload.app_name = teachAppSelect.value;
+        }
+
+        send({ event: 'teach_save', payload });
+      });
+
+      // Modal cancel
+      teachCancelBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        teachModal.classList.remove('visible');
+        teachModal.setAttribute('aria-hidden', 'true');
+        teachPendingPayload = null;
+      });
+
+      // Enter key in name input triggers save
+      teachNameInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          teachSaveBtn.click();
         }
       });
 

@@ -54,7 +54,7 @@ Linka includes a Teach Mode that records GUI interactions and saves them as [Her
 ### How it works
 
 1. Click **Teach** in Linka's top bar to start recording. Any mouse click, drag, or keystroke is captured through the CGEvent tap.
-2. Click Teach again to stop. Enter a name. Linka writes a skill file to `~/.hermes/skills/linka/<name>.md`.
+2. Click Teach again to stop. Enter a name, optionally describe what you did ("Write 'hello' in Notes"), and save. Linka writes a skill file to `~/.hermes/skills/linka/<name>.md`.
 3. The skill file includes:
    - Timestamped click coordinates and action types.
    - A reference screenshot (`<name>.png`) captured at recording time.

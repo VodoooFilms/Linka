@@ -180,85 +180,423 @@ function preventBrowserCache(_req, res, next) {
   next();
 }
 
-function generateTeachSkill(name, events, app, hasScreenshot = false, windowBounds = null) {
+// Shared foreground-app helper: single compound AppleScript → 3 values
+// Used by both server.js /hermes/events and main.js hotkey handler.
+export async function getForegroundAppInfo() {
+  try {
+    const { execSync } = await import('child_process');
+    const script = [
+      `tell application "System Events"`,
+      `  set p to first process whose frontmost is true`,
+      `  set n to name of p`,
+      `  try`,
+      `    set b to bundle identifier of p`,
+      `  on error`,
+      `    set b to ""`,
+      `  end try`,
+      `  try`,
+      `    set t to title of front window of p`,
+      `  on error`,
+      `    set t to ""`,
+      `  end try`,
+      `  return n & "|" & b & "|" & t`,
+      `end tell`,
+    ].map((line) => `-e '${line}'`).join(' ');
+    const result = execSync(`osascript ${script}`, { encoding: 'utf8', timeout: 3000 }).trim();
+    const [name, bundleId, windowTitle] = result.split('|').map((s) => s.trim());
+    return { name, bundleId: bundleId || null, windowTitle: windowTitle || null };
+  } catch {
+    return { name: 'unknown', bundleId: null, windowTitle: null };
+  }
+}
+
+function generateTeachSkill(name, events, app, hasScreenshot = false, windowBounds = null, appHistory = null, userPrompt = null) {
   const now = new Date().toISOString();
-  const appName = app?.name || 'unknown';
   const prefix = name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 
-  const steps = events
-    .map((e, i) => {
-      const ts = new Date(e.ts * 1000).toISOString().slice(11, 23);
-      const mods = e.modifiers?.length ? e.modifiers.join('+') + '+' : '';
-      switch (e.type) {
-        case 'mouse_moved':
-          return `${i + 1}. [${ts}] Move mouse to (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
-        case 'left_down':
-          return `${i + 1}. [${ts}] Left click down at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
-        case 'left_up':
-          return `${i + 1}. [${ts}] Left click up at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
-        case 'right_down':
-          return `${i + 1}. [${ts}] Right click down at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
-        case 'right_up':
-          return `${i + 1}. [${ts}] Right click up at (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
-        case 'scroll':
-          return `${i + 1}. [${ts}] Scroll ${e.dy > 0 ? 'down' : 'up'} by ${Math.abs(e.dy || 0)}px`;
-        case 'key_combo':
-          return `${i + 1}. [${ts}] Press ${mods}${e.key || '?'}`;
-        case 'mouse_drag':
-          return `${i + 1}. [${ts}] Drag to (${e.x?.toFixed(0)}, ${e.y?.toFixed(0)})`;
-        default:
-          return `${i + 1}. [${ts}] ${e.type}`;
+  // ── Detect real target app from app_history ──
+  // app_history entries: [{app: "Linka", ts: 1234.5}, {app: "TextEdit", ts: 1237.8}, ...]
+  // The first entry is usually the app at teach_start (Linka).
+  // Switches FROM Linka TO another app mean "user opened X from Dock/Finder".
+  // The LAST non-Linka app is the real target.
+  let detectedApp = null;
+  let dockSwitch = null;  // {from: "Linka", to: "TextEdit"} if user switched via Dock
+  const LINK_LIKE = new Set(['linka', 'safari', 'firefox', 'google chrome', 'arc', 'brave', 'opera', 'edge']);
+
+  if (Array.isArray(appHistory) && appHistory.length > 0) {
+    // Find the first non-Linka app that appears after Linka
+    const entries = appHistory.filter(e => e && typeof e.app === 'string');
+    for (let i = 1; i < entries.length; i++) {
+      const prev = entries[i - 1].app;
+      const curr = entries[i].app;
+      if (LINK_LIKE.has(prev.toLowerCase()) && !LINK_LIKE.has(curr.toLowerCase())) {
+        dockSwitch = { from: prev, to: curr };
+        break;
       }
-    })
+    }
+    // Use last non-Linka app as detected target
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (!LINK_LIKE.has(entries[i].app.toLowerCase())) {
+        detectedApp = entries[i].app;
+        break;
+      }
+    }
+  }
+
+  // app_name from teach_start (fallback)
+  const startAppName = app?.app_name || app?.name || 'unknown';
+  // Effective app: detected > start > 'unknown'
+  const effectiveApp = detectedApp || startAppName;
+
+  // User prompt overrides everything
+  const hasUserIntent = userPrompt && typeof userPrompt === 'string' && userPrompt.trim().length > 0;
+  const userIntentText = hasUserIntent ? userPrompt.trim() : null;
+
+  // ── Phase 1: group raw events into high-level actions ──
+  const actions = [];
+  let pendingKeys = [];
+  let pendingKeyCombos = [];  // for bare key_combo events (no modifiers)
+  let clickStart = null;
+  let dragStart = null;
+  let lastPos = null;
+
+  function flushKeys() {
+    if (pendingKeys.length === 0) return;
+    const text = pendingKeys.map(k => k.key || '').join('');
+    const count = pendingKeys.length;
+    const keyName = pendingKeys[0].key || '?';
+    if (count === 1) {
+      actions.push({ type: 'key', key: keyName, text, label: `Press ${keyName}` });
+    } else {
+      actions.push({ type: 'type', text, count, label: `Type "${text}" (${count} keystrokes)` });
+    }
+    pendingKeys = [];
+  }
+
+  function flushKeyCombos() {
+    if (pendingKeyCombos.length === 0) return;
+    const key = pendingKeyCombos[0].key || '?';
+    const count = pendingKeyCombos.length;
+    // Only group as text if key is a printable character
+    const isPrintable = key && key.length === 1 && /^[a-zA-Z0-9]$/.test(key);
+    if (isPrintable && count > 1) {
+      const text = pendingKeyCombos.map(k => k.key || '').join('');
+      actions.push({ type: 'type', text, count, label: `Type "${text}" (${count} keystrokes)` });
+    } else {
+      for (let i = 0; i < count; i++) {
+        actions.push({ type: 'key', key, text: key, label: `Press ${key}` });
+      }
+    }
+    pendingKeyCombos = [];
+  }
+
+  function flushClick() {
+    if (!clickStart) return;
+    actions.push({
+      type: 'click',
+      x: Math.round(clickStart.x),
+      y: Math.round(clickStart.y),
+      label: `Click at (${Math.round(clickStart.x)}, ${Math.round(clickStart.y)})`,
+    });
+    clickStart = null;
+  }
+
+  function flushDrag() {
+    if (!dragStart) return;
+    actions.push({
+      type: 'drag',
+      fromX: Math.round(dragStart.fromX),
+      fromY: Math.round(dragStart.fromY),
+      toX: Math.round(dragStart.toX),
+      toY: Math.round(dragStart.toY),
+      label: `Drag from (${Math.round(dragStart.fromX)}, ${Math.round(dragStart.fromY)}) to (${Math.round(dragStart.toX)}, ${Math.round(dragStart.toY)})`,
+    });
+    dragStart = null;
+  }
+
+  for (const e of events) {
+    const x = e.x || 0;
+    const y = e.y || 0;
+
+    switch (e.type) {
+      case 'mouse_moved':
+        lastPos = { x, y };
+        break;
+      case 'left_down':
+        flushKeys();
+        flushClick();
+        clickStart = { x, y };
+        break;
+      case 'left_up':
+        if (clickStart) {
+          // click complete at last known position
+          clickStart.x = x || clickStart.x;
+          clickStart.y = y || clickStart.y;
+          flushClick();
+        }
+        break;
+      case 'right_down':
+        flushKeys();
+        flushClick();
+        actions.push({ type: 'right_click', x: Math.round(x), y: Math.round(y), label: `Right-click at (${Math.round(x)}, ${Math.round(y)})` });
+        break;
+      case 'mouse_drag':
+        if (!dragStart) {
+          flushKeys();
+          flushClick();
+          dragStart = { fromX: lastPos?.x || x, fromY: lastPos?.y || y, toX: x, toY: y };
+        } else {
+          dragStart.toX = x;
+          dragStart.toY = y;
+        }
+        break;
+      case 'scroll':
+        flushKeys();
+        flushClick();
+        actions.push({ type: 'scroll', direction: e.dy > 0 ? 'down' : 'up', amount: Math.abs(e.dy || 0), label: `Scroll ${e.dy > 0 ? 'down' : 'up'} ${Math.abs(e.dy || 0)}px` });
+        break;
+      case 'key_combo':
+        // Bare key (no modifiers): group consecutive same-key presses
+        if (!e.modifiers || e.modifiers.length === 0) {
+          flushClick();
+          flushDrag();
+          if (pendingKeyCombos.length > 0 && pendingKeyCombos[pendingKeyCombos.length - 1].key !== e.key) {
+            flushKeyCombos();
+          }
+          pendingKeyCombos.push(e);
+        } else {
+          flushKeys();
+          flushKeyCombos();
+          flushClick();
+          flushDrag();
+          const comboMods = e.modifiers.join('+') + '+';
+          actions.push({ type: 'key_combo', combo: comboMods + (e.key || '?'), label: `Press ${comboMods}${e.key || '?'}` });
+        }
+        break;
+      case 'key_down':
+      case 'key_up':
+        // Group consecutive same-key presses
+        if (e.type === 'key_down' && e.key) {
+          if (pendingKeys.length > 0 && pendingKeys[pendingKeys.length - 1].key !== e.key) {
+            flushKeys();
+          }
+          pendingKeys.push(e);
+        }
+        break;
+      default:
+        // catch any other event types
+        break;
+    }
+  }
+  flushKeys();
+  flushKeyCombos();
+  flushClick();
+  flushDrag();
+
+  // ── Phase 2: infer intent ──
+  const clickCount = actions.filter(a => a.type === 'click').length;
+  const rightClickCount = actions.filter(a => a.type === 'right_click').length;
+  const typeActions = actions.filter(a => a.type === 'type');
+  const keyActions = actions.filter(a => a.type === 'key');
+  const dragCount = actions.filter(a => a.type === 'drag').length;
+  const scrollCount = actions.filter(a => a.type === 'scroll').length;
+  const typedText = typeActions.map(a => a.text).join('');
+
+  // Build intent summary
+  const parts = [];
+  // If dockSwitch detected, note it explicitly
+  if (dockSwitch) {
+    parts.push(`Open **${dockSwitch.to}**`);
+  } else if (effectiveApp !== 'unknown') {
+    parts.push(`Open **${effectiveApp}**`);
+  }
+  if (clickCount > 0) parts.push(`click ${clickCount} time${clickCount > 1 ? 's' : ''}`);
+  if (rightClickCount > 0) parts.push(`right-click ${rightClickCount} time${rightClickCount > 1 ? 's' : ''}`);
+  if (dragCount > 0) parts.push(`drag ${dragCount} time${dragCount > 1 ? 's' : ''}`);
+  if (scrollCount > 0) parts.push(`scroll`);
+  if (typedText) {
+    const displayText = typedText.length > 30 ? typedText.slice(0, 27) + '...' : typedText;
+    parts.push(`type "${displayText}"`);
+  }
+  keyActions.forEach(k => parts.push(`press ${k.key}`));
+  const intentSummary = parts.length > 0 ? parts.join(', ') : 'interact with the UI';
+
+  // User prompt as authoritative intent
+  const displayIntent = userIntentText || intentSummary;
+
+  // ── Phase 3: generate actionable steps ──
+  const actionSteps = actions
+    .map((a, i) => `${i + 1}. ${a.label}`)
     .join('\n');
 
-  const stepCount = events.length;
+  // ── Phase 4: build replay instructions ──
+  const hasClicks = clickCount > 0 || rightClickCount > 0 || dragCount > 0;
+  const hasKeyboard = typeActions.length > 0 || keyActions.length > 0 || actions.some(a => a.type === 'key_combo');
 
-  const appContext = appName !== 'unknown'
-    ? `in **${appName}**`
-    : `on macOS`;
+  // App-specific hints for common apps
+  const APP_HINTS = {
+    'textedit': { setup: 'TextEdit opens a new document by default. If not, press ⌘N.', keystrokes: true },
+    'notes': { setup: 'Create a new note: ⌘N, then click in the note body.', keystrokes: true },
+    'safari': { setup: 'Open a new tab: ⌘T, then click in the address/search bar.', keystrokes: true },
+    'firefox': { setup: 'Open a new tab: ⌘T, then click in the address/search bar.', keystrokes: true },
+    'google chrome': { setup: 'Open a new tab: ⌘T, then click in the address bar.', keystrokes: true },
+    'terminal': { setup: 'Terminal opens with a shell prompt ready for input.', keystrokes: true },
+    'pages': { setup: 'Create a new document: ⌘N, then click in the document body.', keystrokes: true },
+    'finder': { setup: 'Finder is ready — navigate or use ⌘⇧G for Go to Folder.', keystrokes: false },
+    'messages': { setup: 'Start a new message: ⌘N, then type a contact name.', keystrokes: true },
+    'mail': { setup: 'Create a new email: ⌘N.', keystrokes: true },
+  };
 
+  const appKey = effectiveApp.toLowerCase();
+  const appHint = APP_HINTS[appKey] || null;
+
+  let replaySection = '';
+
+  // ── Intent-first replay (when user provided a prompt) ──
+  if (userIntentText && effectiveApp !== 'unknown') {
+    replaySection += `### Primary: Follow user intent\n\n`;
+    replaySection += `The user said: **"${userIntentText}"**\n\n`;
+    replaySection += `1. Activate **${effectiveApp}**: \`osascript -e 'tell application "${effectiveApp}" to activate'\`\n`;
+    replaySection += `2. Wait for the app to be ready\n`;
+    if (appHint) {
+      replaySection += `3. ${appHint.setup}\n`;
+      let stepNum = 4;
+      if (hasClicks && clickCount > 0) {
+        replaySection += `${stepNum}. The reference screenshot at \`~/.hermes/skills/linka/${prefix}.png\` shows where to click\n`;
+        stepNum++;
+        replaySection += `${stepNum}. If model has vision: use \`vision_analyze\` to locate targets, then CGEvent\n`;
+        stepNum++;
+        replaySection += `${stepNum}. If no vision: click manually where the screenshot shows, then replay keystrokes\n`;
+        stepNum++;
+      }
+      if (hasKeyboard) {
+        const allKeys = [];
+        typeActions.forEach(a => allKeys.push(...(a.text || '').split('')));
+        keyActions.forEach(k => allKeys.push(k.key));
+        const fullText = allKeys.join(' ');
+        replaySection += `${stepNum}. Type: \`${fullText}\`\n`;
+        if (typedText) {
+          replaySection += `   _(recorded text: "${typedText}")_\n`;
+        }
+      }
+    } else {
+      let stepNum = 3;
+      if (hasKeyboard && !hasClicks) {
+        replaySection += `${stepNum}. The workflow only involves keystrokes — replay them directly:\n`;
+        if (typedText) {
+          replaySection += `   - Type: \`${typedText}\`\n`;
+        }
+        keyActions.forEach(k => {
+          replaySection += `   - Press: \`${k.key}\`\n`;
+        });
+      }
+      if (hasClicks) {
+        replaySection += `${stepNum}. Reference screenshot: \`~/.hermes/skills/linka/${prefix}.png\`\n`;
+        stepNum++;
+        replaySection += `${stepNum}. If model has vision: use \`vision_analyze\` → click with CGEvent\n`;
+        stepNum++;
+        replaySection += `${stepNum}. If no vision: verify targets manually before clicking\n`;
+      }
+    }
+    replaySection += `\n`;
+  } else if (effectiveApp !== 'unknown') {
+    // ── Standard replay (no user prompt) ──
+    replaySection += `### Primary: Open the app and replay\n\n`;
+    replaySection += `1. Activate **${effectiveApp}**: \`osascript -e 'tell application "${effectiveApp}" to activate'\`\n`;
+    if (dockSwitch) {
+      replaySection += `   _(Detected switch from ${dockSwitch.from} → ${dockSwitch.to} during recording)_\n`;
+    }
+    replaySection += `2. Wait for the app to be ready\n`;
+    if (appHint && hasClicks) {
+      replaySection += `3. ${appHint.setup}\n`;
+    }
+    if (hasKeyboard && !hasClicks) {
+      replaySection += `3. The workflow only involves keystrokes — replay them directly:\n`;
+      if (typedText) {
+        replaySection += `   - Type: \`${typedText}\`\n`;
+      }
+      keyActions.forEach(k => {
+        replaySection += `   - Press: \`${k.key}\`\n`;
+      });
+    }
+    if (hasClicks) {
+      replaySection += `4. Reference screenshot: \`~/.hermes/skills/linka/${prefix}.png\`\n`;
+      replaySection += `5. If model has vision: use \`vision_analyze\` to locate UI targets, then click with CGEvent\n`;
+      replaySection += `6. If no vision: the clicks are clustered around these coordinates — verify manually:\n`;
+    }
+    replaySection += `\n`;
+  } else {
+    replaySection += `### App unknown — replay with caution\n\n`;
+    replaySection += `The recording didn't capture which app was used. Ask the user to identify the target app, or:\n`;
+    replaySection += `1. Check the reference screenshot: \`~/.hermes/skills/linka/${prefix}.png\`\n`;
+    replaySection += `2. If you have vision, use \`vision_analyze\` to identify the app and UI targets\n`;
+    replaySection += `3. If no vision: ask the user "¿qué app estabas usando?" before replaying clicks\n`;
+    if (hasKeyboard) {
+      replaySection += `4. Keystrokes are safe to replay anywhere — they don't depend on screen position\n`;
+    }
+    replaySection += `\n`;
+  }
+
+  // Fallback: CGEvent replay for clicks
+  if (hasClicks) {
+    replaySection += `### Fallback: CGEvent click simulation\n\n`;
+    replaySection += `If you can verify the on-screen targets (via vision or user confirmation):\n\n`;
+    replaySection += `\`\`\`swift\n`;
+    replaySection += `// Use macos-input-simulation skill — post clicks at HID level\n`;
+    replaySection += `// Coordinates are in Quartz space (origin bottom-left)\n`;
+    replaySection += `\`\`\`\n\n`;
+  }
+
+  // Keystroke replay
+  if (hasKeyboard) {
+    replaySection += `### Keystroke replay (always safe)\n\n`;
+    replaySection += `These don't depend on screen position. Use AppleScript keystroke (fast):\\n\\n`;
+    replaySection += `\`\`\`applescript\\n`;
+    replaySection += `tell application \"System Events\" to tell process \"${effectiveApp}\" to keystroke \"${typedText}\"\\n`;
+    replaySection += `\`\`\`\\n\\n`;
+    replaySection += `If AppleScript times out (permissions), fall back to Swift CGEvent per-character.\\n\\n`;
+    if (typedText) {
+    }
+    keyActions.forEach(k => {
+      replaySection += `// Press ${k.key}\n`;
+    });
+    replaySection += `\`\`\`\n\n`;
+  }
+
+  // Screenshot reference
   const screenshotSection = hasScreenshot
-    ? `\n## 📸 Reference Screenshot\n\n\`~/.hermes/skills/linka/${prefix}.png\` — captured at recording time. Use with \`vision_analyze\` to locate UI elements when the window has moved.\n\n**Usage:** \`vision_analyze(image_url="~/.hermes/skills/linka/${prefix}.png", question="Describe the UI elements visible at each click coordinate")\`\n`
-    : '';
-
-  const windowSection = windowBounds
-    ? `\n## 🪟 Window Position (at recording)\n\n- **App:** ${appName}\n- **Position:** (${windowBounds.x}, ${windowBounds.y})\n- **Size:** ${windowBounds.width}×${windowBounds.height}\n\nTo replay after the window moved:\n1. Get current window position via AppleScript: \`osascript -e 'tell application "System Events" to get position of front window of first process whose frontmost is true'\`\n2. Calculate offset: \`offsetX = currentX - ${windowBounds.x}\`, \`offsetY = currentY - ${windowBounds.y}\`\n3. Adjust all click coordinates: \`newX = recordedX + offsetX\`, \`newY = recordedY + offsetY\`\n`
+    ? `## 📸 Reference Screenshot\n\n\`~/.hermes/skills/linka/${prefix}.png\` — captured during recording.\n\nIf your model has vision, use this to identify the app and UI targets:\n\n\`vision_analyze(image_url="~/.hermes/skills/linka/${prefix}.png", question="What app is this? Describe the UI elements at each click coordinate")\`\n\nIf your model lacks vision, skip this and use the intent-based replay below.\n`
     : '';
 
   return `---
 name: ${prefix}
-description: Auto-generated from Linka Teach — recorded from ${appName} on ${now.slice(0, 10)}
+description: Linka Teach — ${displayIntent}
 version: 1.0.0
-app: ${appName}
-events: ${stepCount}
-screenshot: ${hasScreenshot}
-windowBounds: ${windowBounds ? JSON.stringify(windowBounds) : 'null'}
----
+app: ${effectiveApp}
+actions: ${actions.length}
+events: ${events.length}
+has_screenshot: ${hasScreenshot}
+has_clicks: ${hasClicks}
+has_keyboard: ${hasKeyboard}
+${dockSwitch ? `dock_switch: ${dockSwitch.from} → ${dockSwitch.to}\n` : ''}---
 
 # ${name}
 
-Workflow recorded ${appContext} on ${now.slice(0, 10)} (${stepCount} events).
+**Intent:** ${displayIntent}.
+${userIntentText ? `\n**User said:** "${userIntentText}"\n` : ''}
+Recorded ${effectiveApp !== 'unknown' ? `in **${effectiveApp}**` : 'on macOS'} on ${now.slice(0, 10)}.
+${dockSwitch ? `\n> ⚠️ App switch detected: **${dockSwitch.from}** → **${dockSwitch.to}**. The user likely opened ${dockSwitch.to} from the Dock.\n` : ''}
+## Actions (${actions.length} high-level from ${events.length} raw events)
 
-## Steps
+${actionSteps || '_No actions extracted_'}
 
-${steps}
-${screenshotSection}${windowSection}
-## 🤖 Hermes Usage
+${screenshotSection}
+## 🤖 How to Replay
 
-To replay this workflow:
-
-1. Open **${appName}** and bring it to the foreground.
-2. Take a current screenshot via Linka bridge_capture_request or \`screencapture\` CLI.
-3. Use \`vision_analyze\` with the reference screenshot to locate each click target on the current screen. Recalculate coordinates if the window moved.
-4. Execute each click at the adjusted coordinates using CGEvent at \`.cghidEventTap\` (Quartz-space, origin bottom-left).
-5. Insert a 300-500ms delay between clicks for UI responsiveness.
-6. Use \`vision_analyze\` as a double-check: after each click, verify the expected UI change (button highlight, new panel, text appearing). If the result doesn't match the reference, pause and ask the user.
-7. Use OCR via \`vision_analyze\` on the current screen to confirm you're clicking the right button/label — cross-reference with the reference screenshot's visible text.
-
-**Replay command:** screenshot → compare → recalculate → click → verify. Repeat for each step.
-
+${replaySection}
 ## Raw Events
+
+For debugging or precise coordinate work. ${events.length} events recorded.
 
 \`\`\`json
 ${JSON.stringify(events, null, 2)}
@@ -754,28 +1092,6 @@ export async function startServer(options = {}) {
     }
   });
 
-  // Helper: get foreground app info via AppleScript
-  async function getForegroundAppInfo() {
-    try {
-      const { execSync } = await import('child_process');
-      const name = execSync(
-        `osascript -e 'tell application "System Events" to get name of first process whose frontmost is true'`,
-        { encoding: 'utf8', timeout: 3000 },
-      ).trim();
-      const bundleId = execSync(
-        `osascript -e 'tell application "System Events" to get bundle identifier of first process whose frontmost is true' 2>/dev/null || echo ""`,
-        { encoding: 'utf8', timeout: 3000 },
-      ).trim();
-      const windowTitle = execSync(
-        `osascript -e 'tell application "System Events" to get title of front window of first process whose frontmost is true' 2>/dev/null || echo ""`,
-        { encoding: 'utf8', timeout: 3000 },
-      ).trim();
-      return { name, bundleId: bundleId || null, windowTitle: windowTitle || null };
-    } catch {
-      return { name: 'unknown', bundleId: null, windowTitle: null };
-    }
-  }
-
   // Phase 2.5: Get front window position/size for coordinate offset on replay
   async function getWindowBounds() {
     try {
@@ -919,6 +1235,22 @@ export async function startServer(options = {}) {
                   ws._teachScreenshot = null;
                 }
               }
+              // Fallback: use macOS screencapture CLI when Electron desktopCapturer fails
+              if (!ws._teachScreenshot && process.platform === 'darwin') {
+                try {
+                  const { execSync } = await import('child_process');
+                  const tmpPath = '/tmp/linka_teach_screenshot.png';
+                  execSync(`screencapture -x -C -t png "${tmpPath}"`, { timeout: 5000 });
+                  const fs = await import('fs');
+                  const buf = fs.readFileSync(tmpPath);
+                  ws._teachScreenshot = `data:image/png;base64,${buf.toString('base64')}`;
+                  fs.unlinkSync(tmpPath);
+                  console.log('[teach] Reference screenshot captured via screencapture fallback.');
+                } catch (fallbackErr) {
+                  console.warn('[teach] Screencapture fallback also failed:', fallbackErr?.message || fallbackErr);
+                  ws._teachScreenshot = null;
+                }
+              }
               ws._teachWindowBounds = await getWindowBounds();
               if (ws._teachWindowBounds) {
                 console.log(`[teach] Window bounds: ${ws._teachWindowBounds.x},${ws._teachWindowBounds.y} ${ws._teachWindowBounds.width}x${ws._teachWindowBounds.height}`);
@@ -954,7 +1286,7 @@ export async function startServer(options = {}) {
 
         // Hermes Linka: save recorded workflow as a skill
         if (data.event === 'teach_save') {
-          const { name, events, app } = data.payload || {};
+          const { name, events, app, app_history, user_prompt } = data.payload || {};
           if (!name || !Array.isArray(events)) {
             sendJson(ws, { event: 'teach_error', payload: { message: 'Missing name or events.' } });
             return;
@@ -979,7 +1311,12 @@ export async function startServer(options = {}) {
             }
             delete ws._teachScreenshot;
 
-            const content = generateTeachSkill(name, events, app || {}, hasScreenshot, ws._teachWindowBounds);
+            const content = generateTeachSkill(
+              name, events, app || {},
+              hasScreenshot, ws._teachWindowBounds,
+              app_history || null,
+              user_prompt || null
+            );
             delete ws._teachWindowBounds;
             fs.writeFileSync(filePath, content);
             console.log(`[teach] Skill saved: ${filePath}`);
