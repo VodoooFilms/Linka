@@ -11,8 +11,11 @@ insert_final_newline = true
 [*.md]
 trim_trailing_whitespace = false
 
-[*.{swift,sln,csproj,xml,plist}]
-indent_style = tab
+[*.swift]
+indent_size = 4
+
+[*.{yml,yaml}]
+indent_size = 2
 
 [Makefile]
 indent_style = tab

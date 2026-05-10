@@ -11,6 +11,7 @@ Linka on macOS needs the right system permissions to work correctly.
 Grant `Accessibility` to the app that actually launches Linka, which may be `Linka.app`, `Terminal`, or your editor if you run it from there.
 If you use Bridge screen capture, also grant `Screen Recording` to that same app.
 If macOS asks for `Local Network` access, allow it so your phone can reach Linka over the LAN.
+In practice macOS can prompt up to 3 separate times: one for `Accessibility`, one for `Screen Recording`, and sometimes a third permission pass after reopening the launcher app or the packaged `Linka.app`.
 After changing permissions, fully quit Linka and open it again.
 Run `npm install` fresh on macOS and do not copy `node_modules` from a Windows checkout, or Electron may resolve to `electron.exe` instead of the macOS app binary.
 
@@ -136,6 +137,7 @@ Important:
 - Grant the permission to the app that launches Linka. If you run from Terminal, grant Terminal. If you run the packaged app, grant `Linka.app`.
 - After enabling a permission, quit and reopen the launching app, then reopen Linka.
 - If macOS still shows stale launcher behavior, reopen the Electron-generated `Linka.app` so the OS re-registers the correct bundle.
+- macOS may ask more than once. The usual pattern is one approval for `Accessibility`, one for `Screen Recording`, and sometimes a third prompt after relaunching before control starts working normally.
 
 If you want a local clickable macOS app bundle for testing:
 

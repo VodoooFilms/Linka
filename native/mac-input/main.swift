@@ -611,11 +611,37 @@ private func postMouseButton(button rawButton: String, down: Bool) throws {
 }
 
 private func postClick(button: String, double: Bool) throws {
+    try requireAccessibility()
+    let cgButton = mouseButton(button, down: true)
+    let point = currentCursorPosition()
     let clicks = double ? 2 : 1
+
     for clickIndex in 0..<clicks {
-        try postMouseButton(button: button, down: true)
+        let clickState = Int64(clickIndex + 1)
+        guard let down = CGEvent(
+            mouseEventSource: nil,
+            mouseType: mouseEventType(cgButton, down: true),
+            mouseCursorPosition: point,
+            mouseButton: cgButton
+        ) else {
+            continue
+        }
+        down.setIntegerValueField(.mouseEventClickState, value: clickState)
+        down.post(tap: .cghidEventTap)
+
         usleep(18_000)
-        try postMouseButton(button: button, down: false)
+
+        guard let up = CGEvent(
+            mouseEventSource: nil,
+            mouseType: mouseEventType(cgButton, down: false),
+            mouseCursorPosition: point,
+            mouseButton: cgButton
+        ) else {
+            continue
+        }
+        up.setIntegerValueField(.mouseEventClickState, value: clickState)
+        up.post(tap: .cghidEventTap)
+
         if double && clickIndex == 0 {
           usleep(70_000)
         }

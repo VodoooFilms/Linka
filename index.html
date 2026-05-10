@@ -1526,7 +1526,8 @@
       const PINCH_ZOOM_THRESHOLD = 18;
       const PINCH_MAX_STEPS_PER_MOVE = 3;
       const TAP_MAX_MS = 220;
-      const TAP_MOVE_TOLERANCE = 7;
+      const TAP_MOVE_TOLERANCE = 20;
+      const DOUBLE_TAP_MAX_MS = 400;
       const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
       const MOBILE_SESSION_STORAGE_KEY = 'linka.mobile-session.v1';
 
@@ -2677,6 +2678,11 @@
         moveFlushTimer: null,
         pendingDx: 0,
         pendingDy: 0,
+        lastTapTime: 0,
+        lastTapX: 0,
+        lastTapY: 0,
+        singleTapTimer: null,
+        touchActive: false,
       };
 
       const MOVE_FLUSH_INTERVAL = 8;
@@ -2693,6 +2699,13 @@
 
         track.pendingDx = 0;
         track.pendingDy = 0;
+      }
+
+      function clearPendingSingleTap() {
+        if (track.singleTapTimer) {
+          clearTimeout(track.singleTapTimer);
+          track.singleTapTimer = null;
+        }
       }
 
       function getPinchDistance() {
@@ -2754,43 +2767,54 @@
         cursorDot.style.transform = `translate3d(${x}px, ${y}px, 0)`;
       }
 
-      trackpadZone.addEventListener('pointerdown', (event) => {
-        capturePointer(trackpadZone, event);
-        track.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      function trackpadTouchStart(event) {
+        event.preventDefault();
+        activate(trackpadZone, true);
 
-        if (track.primaryId === null) {
-          track.primaryId = event.pointerId;
-          track.startTime = performance.now();
-          track.startX = event.clientX;
-          track.startY = event.clientY;
-          track.lastX = event.clientX;
-          track.lastY = event.clientY;
-          track.moved = false;
-          track.multiTouch = false;
-          resetPinchGesture();
-        } else {
-          track.multiTouch = true;
-          startPinchGesture();
+        for (const touch of event.changedTouches) {
+          track.pointers.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
+
+          if (track.primaryId === null) {
+            track.primaryId = touch.identifier;
+            track.startTime = performance.now();
+            track.startX = touch.clientX;
+            track.startY = touch.clientY;
+            track.lastX = touch.clientX;
+            track.lastY = touch.clientY;
+            track.moved = false;
+            track.multiTouch = false;
+            resetPinchGesture();
+          } else {
+            track.multiTouch = true;
+            startPinchGesture();
+          }
         }
 
-        positionCursorDot(event);
-      });
+        if (event.touches.length > 0) {
+          positionCursorDot({ clientX: event.touches[0].clientX, clientY: event.touches[0].clientY });
+        }
+      }
 
-      trackpadZone.addEventListener('pointermove', (event) => {
-        if (!track.pointers.has(event.pointerId)) return;
+      function trackpadTouchMove(event) {
         event.preventDefault();
-        track.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+        for (const touch of event.changedTouches) {
+          if (!track.pointers.has(touch.identifier)) return;
+          track.pointers.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
+        }
 
         if (track.multiTouch) {
           handlePinchGesture();
           return;
         }
 
-        if (event.pointerId !== track.primaryId) return;
+        if (event.touches.length === 0) return;
+        const primary = event.touches[0];
+        if (primary.identifier !== track.primaryId) return;
 
-        const dx = (event.clientX - track.lastX) * SENSITIVITY;
-        const dy = (event.clientY - track.lastY) * SENSITIVITY;
-        const totalMove = Math.hypot(event.clientX - track.startX, event.clientY - track.startY);
+        const dx = (primary.clientX - track.lastX) * SENSITIVITY;
+        const dy = (primary.clientY - track.lastY) * SENSITIVITY;
+        const totalMove = Math.hypot(primary.clientX - track.startX, primary.clientY - track.startY);
 
         if (totalMove > TAP_MOVE_TOLERANCE) {
           track.moved = true;
@@ -2803,21 +2827,60 @@
           track.moveFlushTimer = setTimeout(flushPendingMove, MOVE_FLUSH_INTERVAL);
         }
 
-        track.lastX = event.clientX;
-        track.lastY = event.clientY;
-        positionCursorDot(event);
-      });
+        track.lastX = primary.clientX;
+        track.lastY = primary.clientY;
+        positionCursorDot({ clientX: primary.clientX, clientY: primary.clientY });
+      }
 
-      function endTrackPointer(event) {
-        if (!track.pointers.has(event.pointerId)) return;
+      function trackpadTouchEnd(event) {
         event.preventDefault();
-        track.pointers.delete(event.pointerId);
+
+        for (const touch of event.changedTouches) {
+          track.pointers.delete(touch.identifier);
+        }
 
         if (track.pointers.size === 0) {
           flushPendingMove();
           const duration = performance.now() - track.startTime;
+          console.log('[trackpad] touchend', {
+            moved: track.moved,
+            duration: Math.round(duration) + 'ms',
+            tapOk: !track.moved && duration < TAP_MAX_MS,
+            pointersWere: track.multiTouch ? 'multi' : 'single',
+          });
           if (!track.moved && duration < TAP_MAX_MS) {
-            send({ type: 'click', button: track.multiTouch ? 'right' : 'left' });
+            const now = performance.now();
+            const dx = Math.abs(track.startX - track.lastTapX);
+            const dy = Math.abs(track.startY - track.lastTapY);
+            const timeSinceLastTap = now - track.lastTapTime;
+            const isDoubleTap =
+              timeSinceLastTap < DOUBLE_TAP_MAX_MS &&
+              dx < TAP_MOVE_TOLERANCE &&
+              dy < TAP_MOVE_TOLERANCE;
+
+            if (isDoubleTap) {
+              clearPendingSingleTap();
+              send({ type: 'click', button: 'left', double: true });
+              track.lastTapTime = 0;
+              track.lastTapX = 0;
+              track.lastTapY = 0;
+            } else {
+              clearPendingSingleTap();
+              if (track.multiTouch) {
+                send({ type: 'click', button: 'right' });
+                track.lastTapTime = 0;
+                track.lastTapX = 0;
+                track.lastTapY = 0;
+              } else {
+                track.lastTapTime = now;
+                track.lastTapX = track.startX;
+                track.lastTapY = track.startY;
+                track.singleTapTimer = setTimeout(() => {
+                  send({ type: 'click', button: 'left' });
+                  track.singleTapTimer = null;
+                }, DOUBLE_TAP_MAX_MS);
+              }
+            }
           }
 
           track.primaryId = null;
@@ -2832,8 +2895,20 @@
         }
       }
 
-      trackpadZone.addEventListener('pointerup', endTrackPointer);
-      trackpadZone.addEventListener('pointercancel', endTrackPointer);
+      function trackpadTouchCancel(event) {
+        event.preventDefault();
+        track.pointers.clear();
+        track.primaryId = null;
+        track.multiTouch = false;
+        resetPinchGesture();
+        activate(trackpadZone, false);
+        flushPendingMove();
+      }
+
+      trackpadZone.addEventListener('touchstart', trackpadTouchStart, { passive: false });
+      trackpadZone.addEventListener('touchmove', trackpadTouchMove, { passive: false });
+      trackpadZone.addEventListener('touchend', trackpadTouchEnd, { passive: false });
+      trackpadZone.addEventListener('touchcancel', trackpadTouchCancel, { passive: false });
 
       dragZone.addEventListener('pointerdown', (event) => {
         capturePointer(dragZone, event);

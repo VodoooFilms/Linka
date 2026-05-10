@@ -100,6 +100,12 @@ export function createMacOSInputAdapter(onStateChange) {
   const responseResolvers = new Map();
   let pendingVolumeValue = null;
   let volumeFlushTimer = null;
+  let retryCount = 0;
+  let retryTimer = null;
+  let draining = false;
+  const MAX_RETRIES = 10;
+  const RETRY_DELAY_MS = 2000;
+  const NON_CRITICAL_COMMANDS = new Set(['move', 'scroll']);
 
   const adapter = {
     name: 'macos-quartz',
@@ -158,6 +164,7 @@ export function createMacOSInputAdapter(onStateChange) {
       });
     },
     close() {
+      if (retryTimer) clearTimeout(retryTimer);
       if (volumeFlushTimer) clearTimeout(volumeFlushTimer);
       if (alive && helper) {
         helper.stdin.end();
@@ -264,6 +271,7 @@ export function createMacOSInputAdapter(onStateChange) {
       volumeFlushTimer = null;
       flushPendingVolume();
     }, 45);
+    volumeFlushTimer.unref?.();
   }
 
   function updateStatus(response) {
@@ -301,6 +309,7 @@ export function createMacOSInputAdapter(onStateChange) {
     });
 
     alive = true;
+    draining = false;
     stdoutBuffer = '';
 
     helper.stdout.on('data', (chunk) => {
@@ -415,7 +424,7 @@ export function createMacOSInputAdapter(onStateChange) {
       console.warn(`[input:macos] helper exited code=${code} signal=${signal}`);
       adapter.ready = false;
       adapter.name = 'macos-quartz (unavailable)';
-      onStateChange?.({ name: adapter.name, ready: false, exited: true });
+      scheduleRetry();
     });
 
     helper.once('error', (error) => {
@@ -423,8 +432,36 @@ export function createMacOSInputAdapter(onStateChange) {
       console.warn(`[input:macos] helper failed: ${error.message}`);
       adapter.ready = false;
       adapter.name = 'macos-quartz (unavailable)';
-      onStateChange?.({ name: adapter.name, ready: false, error: error.message });
+      scheduleRetry();
     });
+  }
+
+  function scheduleRetry() {
+    if (retryTimer) return;
+    retryCount++;
+
+    if (retryCount > MAX_RETRIES) {
+      console.warn('[input:macos] Max retries reached. Input is unavailable.');
+      onStateChange?.({ name: 'macos-quartz', ready: false, retriesExhausted: true });
+      return;
+    }
+
+    console.warn(`[input:macos] Retry ${retryCount}/${MAX_RETRIES} in ${RETRY_DELAY_MS}ms`);
+    onStateChange?.({ name: 'macos-quartz', ready: false, retrying: true, retryCount });
+
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      try {
+        spawnHelper();
+        retryCount = 0;
+        console.warn('[input:macos] Helper recovered.');
+        onStateChange?.({ name: 'macos-quartz', ready: true, recovered: true });
+      } catch (error) {
+        console.warn(`[input:macos] Respawn failed: ${error.message}`);
+        scheduleRetry();
+      }
+    }, RETRY_DELAY_MS);
+    retryTimer.unref?.();
   }
 
   function send(command) {
@@ -432,13 +469,19 @@ export function createMacOSInputAdapter(onStateChange) {
       return;
     }
 
+    if (draining && NON_CRITICAL_COMMANDS.has(command.type)) {
+      return;
+    }
+
     const ok = helper.stdin.write(`${JSON.stringify(command)}\n`);
     if (!ok) {
-      console.warn('[input:macos] helper stdin is saturated; dropping command.');
+      draining = true;
+      console.warn('[input:macos] helper stdin is saturated; buffering.');
     }
   }
 
   process.once('exit', () => {
+    if (retryTimer) clearTimeout(retryTimer);
     if (volumeFlushTimer) clearTimeout(volumeFlushTimer);
     if (alive && helper) {
       helper.stdin.end();

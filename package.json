@@ -1,8 +1,30 @@
 {
   "name": "linka",
   "version": "1.0.0",
-  "description": "A phone browser trackpad, keyboard, scroll pad, and volume controller for Windows and macOS.",
+  "description": "A phone browser trackpad, keyboard, scroll pad, volume controller, and Hermes Agent GUI workflow recorder for macOS and Windows.",
   "license": "MIT",
+  "keywords": [
+    "remote-control",
+    "trackpad",
+    "keyboard",
+    "electron",
+    "macos",
+    "windows",
+    "hermes-agent",
+    "gui-automation",
+    "workflow-recorder",
+    "bridge",
+    "file-transfer",
+    "lan"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VodoooFilms/Linka"
+  },
+  "bugs": {
+    "url": "https://github.com/VodoooFilms/Linka/issues"
+  },
+  "homepage": "https://github.com/VodoooFilms/Linka#readme",
   "type": "module",
   "main": "main.js",
   "scripts": {
@@ -66,10 +88,12 @@
       "build/linka-logo.png",
       "build/entitlements.mac.plist",
       "dist/**/*",
+      "public/**/*",
       "main.js",
       "connection-preload.cjs",
       "scripts/run-electron.cjs",
       "server.js",
+      "server/**/*.js",
       "input-adapter.js",
       "platform/**/*.js",
       "native/mac-input/**/*",

@@ -55,4 +55,19 @@ if (fs.existsSync(targetApp)) {
 
 run('ditto', [sourceApp, targetApp]);
 
+// Re-sign after ditto to preserve TCC permission bindings.
+// TCC binds to the binary's code-signing hash — copying without re-signing
+// creates a new hash, invalidating Accessibility/Screen Recording permissions.
+const entitlements = path.join(root, 'build', 'entitlements.mac.plist');
+if (fs.existsSync(entitlements)) {
+  run('codesign', [
+    '--force', '--deep', '--sign', '-',
+    '--entitlements', entitlements,
+    targetApp,
+  ]);
+  console.log('[mac-install] Re-signed with ad-hoc signature to preserve TCC bindings.');
+} else {
+  console.warn('[mac-install] No entitlements found. Skipping re-sign. TCC permissions may break.');
+}
+
 console.log(`[mac-install] Installed ${sourceApp} -> ${targetApp}`);

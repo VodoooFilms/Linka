@@ -1,0 +1,17 @@
+{
+  "name": "Linka",
+  "short_name": "Linka",
+  "description": "Phone remote control with Bridge file transfer and AI workflow recording",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080a0c",
+  "theme_color": "#080a0c",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

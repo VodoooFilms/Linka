@@ -546,6 +546,42 @@ if (!gotTheLock) {
           };
           fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
           console.log(`[hermes] ${result.count} events dumped to ${filePath}`);
+
+          // Phase 2: Capture user intent via native macOS dialog (non-blocking)
+          try {
+            const { exec } = await import('child_process');
+            const dialogScript = [
+              `display dialog "What were you doing just now?"`,
+              `default answer ""`,
+              `with title "Hermes Capture"`,
+              `with icon note`,
+              `buttons {"Skip", "Save"}`,
+              `default button "Save"`,
+              `giving up after 10`,
+            ].join(' ');
+            const proc = exec(
+              `osascript -e '${dialogScript}'`,
+              { timeout: 12000 },
+              (_error, stdout) => {
+                const response = stdout?.trim() || '';
+                // Extract the text returned (format: "button returned:Save, text returned:...")
+                const textMatch = response.match(/text returned:(.+?)(?:,|$)/);
+                const intent = textMatch ? textMatch[1].trim() : null;
+                if (intent) {
+                  try {
+                    const existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                    existing.user_intent = intent;
+                    fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+                    console.log(`[hermes] User intent captured: "${intent}"`);
+                  } catch (_e) {
+                    /* file may have been processed already */
+                  }
+                }
+              },
+            );
+          } catch (_e) {
+            /* dialog not available (headless/CI) — skip gracefully */
+          }
         } catch (error) {
           console.error('[hermes] Hotkey dump failed:', error);
         }
