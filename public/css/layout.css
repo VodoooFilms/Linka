@@ -1,0 +1,129 @@
+.controller {
+  grid-row: 2;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: clamp(96px, 16vw, 172px) minmax(320px, 1fr) clamp(96px, 14vw, 156px);
+  grid-template-rows: minmax(96px, 30%) 1fr minmax(76px, 24%);
+  gap: 8px;
+  padding: 8px;
+  width: min(100%, var(--content-max-width));
+  justify-self: center;
+}
+
+.connect-panel {
+  grid-row: 2;
+  display: none;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px 18px;
+  text-align: center;
+  width: min(100%, var(--content-max-width));
+  justify-self: center;
+}
+
+.app.pairing-mode .connect-panel {
+  display: grid;
+}
+
+.app.pairing-mode .controller,
+.app.pairing-mode .keyboard-tools,
+.app.pairing-mode .bridge-panel {
+  display: none;
+}
+
+.connect-card {
+  width: min(100%, 420px);
+  padding: 20px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(17, 22, 26, 0.96), rgba(8, 10, 12, 0.96));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.connect-card h1 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.connect-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.connect-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.connect-action {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.connect-meta {
+  margin-top: 12px;
+  color: rgba(127, 145, 139, 0.84);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.app.keyboard-open .controller {
+  grid-row: 3;
+}
+
+.zone {
+  min-width: 0;
+  min-height: 0;
+}
+
+.zone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  transition:
+    border-color 80ms linear,
+    background 80ms linear,
+    transform 80ms linear;
+}
+
+.zone.active {
+  transform: scale(0.995);
+}
+
+.zone-title {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  color: rgba(238, 244, 242, 0.52);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.zone-icon {
+  width: 30px;
+  height: 30px;
+  color: rgba(238, 244, 242, 0.24);
+  pointer-events: none;
+}

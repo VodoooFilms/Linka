@@ -1,0 +1,263 @@
+.app.bridge-open {
+  grid-template-rows: 52px minmax(0, 1fr);
+}
+
+.app.bridge-open .controller,
+.app.bridge-open .keyboard-tools {
+  display: none;
+}
+
+.bridge-panel {
+  grid-row: 2;
+  min-height: 0;
+  display: none;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px;
+  background: rgba(8, 10, 12, 0.66);
+  touch-action: auto;
+  width: min(100%, var(--content-max-width));
+  justify-self: center;
+}
+
+.app.bridge-open .bridge-panel {
+  display: grid;
+}
+
+.app.pairing-mode.bridge-open .bridge-panel {
+  display: none;
+}
+
+.bridge-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bridge-title {
+  min-width: 0;
+}
+
+.bridge-title strong {
+  display: block;
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.bridge-title span {
+  display: none;
+}
+
+.bridge-back,
+.bridge-capture,
+.bridge-clear,
+.bridge-send,
+.bridge-upload,
+.bridge-action {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  touch-action: manipulation;
+}
+
+.bridge-header-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+.bridge-action-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.bridge-back,
+.bridge-capture,
+.bridge-clear {
+  padding: 0 12px;
+}
+
+.bridge-capture {
+  border-color: rgba(117, 167, 255, 0.34);
+  color: #9fc0ff;
+}
+
+.bridge-capture:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.bridge-monitors {
+  display: none;
+}
+
+.bridge-monitor {
+  font-size: 9px;
+  font-weight: 700;
+  color: #9fc0ff;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  user-select: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.bridge-monitor.active {
+  color: var(--accent);
+}
+
+.bridge-monitor.dimmed {
+  color: rgba(159, 192, 255, 0.25);
+}
+
+.bridge-send {
+  min-width: 74px;
+  border-color: rgba(0, 217, 139, 0.36);
+  background: rgba(0, 217, 139, 0.15);
+  color: var(--accent);
+}
+
+.bridge-feed {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-inline: clamp(0px, 1.8vw, 16px);
+  padding-right: 2px;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.bridge-empty {
+  margin: auto;
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.bridge-item {
+  width: min(100%, 720px);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.bridge-item.from-phone {
+  border-color: rgba(0, 217, 139, 0.18);
+}
+
+.bridge-item.from-pc {
+  border-color: rgba(117, 167, 255, 0.2);
+}
+
+.bridge-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bridge-text {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.42;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  touch-action: auto;
+}
+
+.bridge-image {
+  display: block;
+  width: 100%;
+  max-height: 48vh;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.28);
+  touch-action: auto;
+}
+
+.bridge-action {
+  padding: 0 12px;
+  color: var(--muted);
+}
+
+.bridge-feed,
+.bridge-feed * {
+  touch-action: pan-y;
+}
+
+.bridge-feed button {
+  touch-action: manipulation;
+}
+
+.bridge-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.bridge-input {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 11px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  user-select: text;
+  touch-action: auto;
+}
+
+.bridge-input::placeholder {
+  color: rgba(127, 145, 139, 0.75);
+}
+
+.bridge-upload {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.bridge-file {
+  display: none;
+}

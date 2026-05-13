@@ -1,3 +1,29 @@
+import {
+  buildSocketUrl,
+  clearPairingParamsFromUrl as clearPairingParamsFromUrlBase,
+  clearStoredSession,
+  getAuthCandidate as getAuthCandidateBase,
+  getRequestedPanelFromUrl,
+  persistSession,
+  readPairingParamsFromUrl,
+  readStoredSession,
+  syncPanelUrlState,
+} from './js/pairing/session.js';
+import {
+  DEFAULT_TRACKPAD_PROFILE,
+  TRACKPAD_PROFILES,
+  computeAcceleratedTrackpadDelta as computeAcceleratedTrackpadDeltaBase,
+} from './js/controller/trackpad.js';
+import {
+  copyWithExecCommand,
+  createBridgeId,
+  escapeBridgeHtml,
+  formatBridgeFileSize,
+  formatBridgeSource,
+  formatBridgeTime,
+  normalizeBridgeImageSource,
+} from './js/bridge/utils.js';
+
 const fatalErrorEl = document.getElementById('fatalError');
 const appEl = document.querySelector('.app');
 function showClientError(message) {
@@ -75,38 +101,7 @@ const TAP_MAX_MS = 220;
 const TAP_MOVE_TOLERANCE = 20;  // fingers jitter more than mice; 7px was too strict
 const DOUBLE_TAP_MAX_MS = 400;
 const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
-const MOBILE_SESSION_STORAGE_KEY = 'linka.mobile-session.v1';
-const DEFAULT_TRACKPAD_PROFILE = 'balanced';
 const ACTIVE_TRACKPAD_PROFILE = DEFAULT_TRACKPAD_PROFILE;
-const TRACKPAD_PROFILES = {
-  precision: {
-    id: 'precision',
-    label: 'Precision',
-    minSpeed: 0.12,
-    maxSpeed: 1.1,
-    maxMultiplier: 1.5,
-    smoothing: 0.18,
-    portraitHorizontalBoost: 1,
-  },
-  balanced: {
-    id: 'balanced',
-    label: 'Balanced',
-    minSpeed: 0.1,
-    maxSpeed: 1.3,
-    maxMultiplier: 3,
-    smoothing: 0.2,
-    portraitHorizontalBoost: 1.15,
-  },
-  infinite: {
-    id: 'infinite',
-    label: 'Infinite Reach',
-    minSpeed: 0.08,
-    maxSpeed: 1.15,
-    maxMultiplier: 5.5,
-    smoothing: 0.24,
-    portraitHorizontalBoost: 1.25,
-  },
-};
 
 let socket;
 let reconnectTimer = 0;
@@ -154,163 +149,26 @@ function setConnectScreen(
   updateConnectActions();
 }
 
-function parseStoredSession(rawValue) {
-  if (!rawValue) return null;
-
-  try {
-    const parsed = JSON.parse(rawValue);
-    if (
-      !parsed ||
-      typeof parsed.desktopOrigin !== 'string' ||
-      typeof parsed.sessionId !== 'string' ||
-      typeof parsed.reconnectToken !== 'string'
-    ) {
-      return null;
-    }
-
-    return {
-      desktopOrigin: parsed.desktopOrigin,
-      host: typeof parsed.host === 'string' ? parsed.host : '',
-      port: typeof parsed.port === 'string' ? parsed.port : '',
-      sessionId: parsed.sessionId,
-      reconnectToken: parsed.reconnectToken,
-    };
-  } catch (_error) {
-    return null;
-  }
-}
-
-function resolveTrackpadProfile(profileId) {
-  return TRACKPAD_PROFILES[profileId] || TRACKPAD_PROFILES[DEFAULT_TRACKPAD_PROFILE];
-}
-
-function isPortraitTrackpadLayout() {
-  return (
-    window.matchMedia?.('(orientation: portrait), (max-aspect-ratio: 3 / 4)').matches ||
-    window.innerHeight > window.innerWidth
-  );
-}
-
 function computeAcceleratedTrackpadDelta(rawDx, rawDy, elapsedMs) {
-  const profile = resolveTrackpadProfile(ACTIVE_TRACKPAD_PROFILE);
-  const sampleMs = Math.max(8, Math.min(40, elapsedMs || 16));
-  const speed = Math.hypot(rawDx, rawDy) / sampleMs;
-
-  // Keep slow moves near 1x for precision, then smoothly bend into larger
-  // multipliers as finger speed rises. `smoothstep` avoids abrupt thresholds.
-  const normalizedSpeed = Math.max(
-    0,
-    Math.min(1, (speed - profile.minSpeed) / (profile.maxSpeed - profile.minSpeed)),
-  );
-  const curvedSpeed = normalizedSpeed * normalizedSpeed * (3 - 2 * normalizedSpeed);
-  const targetMultiplier = 1 + curvedSpeed * (profile.maxMultiplier - 1);
-
-  // Smoothly blend toward the target multiplier so momentary timing jitter
-  // does not make the cursor feel like it is surging between move events.
-  track.currentMultiplier += (targetMultiplier - track.currentMultiplier) * profile.smoothing;
-
-  let dx = rawDx * SENSITIVITY * track.currentMultiplier;
-  const dy = rawDy * SENSITIVITY * track.currentMultiplier;
-
-  if (isPortraitTrackpadLayout() && profile.portraitHorizontalBoost > 1) {
-    dx *= profile.portraitHorizontalBoost;
-  }
-
-  return { dx, dy };
-}
-
-function readStoredSession() {
-  return parseStoredSession(window.localStorage.getItem(MOBILE_SESSION_STORAGE_KEY));
-}
-
-function persistSession(session) {
-  if (!session) return;
-
-  const origin = new URL(session.desktopOrigin);
-  window.localStorage.setItem(
-    MOBILE_SESSION_STORAGE_KEY,
-    JSON.stringify({
-      desktopOrigin: origin.origin,
-      host: origin.hostname,
-      port: origin.port || (origin.protocol === 'https:' ? '443' : '80'),
-      sessionId: session.sessionId,
-      reconnectToken: session.reconnectToken,
-    }),
-  );
-}
-
-function clearStoredSession() {
-  window.localStorage.removeItem(MOBILE_SESSION_STORAGE_KEY);
-}
-
-function readPairingParamsFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const sessionId = params.get('sessionId');
-  const pairingToken = params.get('pairingToken');
-  if (!sessionId || !pairingToken) return null;
-  return { sessionId, pairingToken };
-}
-
-function getRequestedPanelFromUrl() {
-  const hash = window.location.hash.replace(/^#/, '').trim().toLowerCase();
-  if (hash === 'bridge') return 'bridge';
-
-  const panel = new URLSearchParams(window.location.search).get('panel');
-  return typeof panel === 'string' && panel.trim().toLowerCase() === 'bridge' ? 'bridge' : '';
-}
-
-function syncPanelUrlState(panel) {
-  const url = new URL(window.location.href);
-  if (panel === 'bridge') {
-    url.hash = 'bridge';
-  } else {
-    url.hash = '';
-  }
-  const next = `${url.pathname}${url.search}${url.hash}`;
-  window.history.replaceState({}, '', next);
+  const result = computeAcceleratedTrackpadDeltaBase({
+    rawDx,
+    rawDy,
+    elapsedMs,
+    sensitivity: SENSITIVITY,
+    profileId: ACTIVE_TRACKPAD_PROFILE,
+    currentMultiplier: track.currentMultiplier,
+  });
+  track.currentMultiplier = result.multiplier;
+  return { dx: result.dx, dy: result.dy };
 }
 
 function clearPairingParamsFromUrl() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete('sessionId');
-  url.searchParams.delete('pairingToken');
-  const next = `${url.pathname}${url.search}${url.hash}`;
-  window.history.replaceState({}, '', next);
+  clearPairingParamsFromUrlBase();
   pendingPairingParams = null;
 }
 
-function getStoredSessionCandidate() {
-  const stored = readStoredSession();
-  if (!stored) return null;
-
-  return {
-    mode: 'reconnect',
-    desktopOrigin: stored.desktopOrigin,
-    sessionId: stored.sessionId,
-    token: stored.reconnectToken,
-  };
-}
-
 function getAuthCandidate() {
-  if (pendingPairingParams) {
-    return {
-      mode: 'pair',
-      desktopOrigin: window.location.origin,
-      sessionId: pendingPairingParams.sessionId,
-      token: pendingPairingParams.pairingToken,
-    };
-  }
-
-  return getStoredSessionCandidate();
-}
-
-function buildSocketUrl(origin) {
-  const url = new URL(origin);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/';
-  url.search = '';
-  url.hash = '';
-  return url.toString();
+  return getAuthCandidateBase(pendingPairingParams);
 }
 
 function applyAuthenticatedSession(origin, sessionId, reconnectToken) {
@@ -695,26 +553,6 @@ function showExecutionFeedback(data) {
   execFeedbackTimer = setTimeout(() => el.classList.remove('visible'), 600);
 }
 
-function createBridgeId() {
-  return (
-    window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  );
-}
-
-function formatBridgeSource(source) {
-  return source === 'pc' ? 'PC' : 'Phone';
-}
-
-function formatBridgeTime(timestamp) {
-  const date = new Date(Number(timestamp) || Date.now());
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function normalizeBridgeImageSource(content) {
-  if (content.startsWith('data:image/')) return content;
-  return `data:image/png;base64,${content}`;
-}
-
 function renderBridgeMessages() {
   bridgeFeed.replaceChildren();
 
@@ -795,20 +633,6 @@ function renderBridgeMessages() {
   bridgeFeed.scrollTop = bridgeFeed.scrollHeight;
 }
 
-function copyWithExecCommand(text) {
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '-9999px';
-  textarea.style.opacity = '0';
-  document.body.append(textarea);
-  textarea.select();
-  const success = document.execCommand('copy');
-  textarea.remove();
-  return success;
-}
-
 async function copyBridgeText(text, button) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
@@ -837,19 +661,6 @@ function downloadBridgeItem(message) {
   document.body.append(link);
   link.click();
   link.remove();
-}
-
-function escapeBridgeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-}
-
-function formatBridgeFileSize(bytes) {
-  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function upsertBridgeMessage(message) {
