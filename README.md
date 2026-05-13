@@ -31,6 +31,7 @@ Linka has three local modes:
 ## Features
 
 - Phone-based trackpad with hold and right-click controls.
+- Adaptive trackpad acceleration keeps slow movement precise and boosts fast swipes for large desktop spaces, with extra horizontal reach in portrait mode.
 - Pinch-to-zoom and multi-touch gesture support.
 - Scroll, keyboard, volume, and mute controls.
 - **Volume sync**: phone slider reflects the actual PC volume on connect.
@@ -176,7 +177,7 @@ npm run build:native:mac
 
 ## Usage
 
-- Use the phone screen as a trackpad. Tap for left-click, two-finger tap for right-click.
+- Use the phone screen as a trackpad. Tap for left-click, two-finger tap for right-click. Slow finger movement stays precise while faster swipes travel farther across large desktops.
 - Use the scroll strip for vertical scrolling.
 - Use Hold for click-and-drag.
 - Use Right for right-click.

@@ -76,6 +76,37 @@ const TAP_MOVE_TOLERANCE = 20;  // fingers jitter more than mice; 7px was too st
 const DOUBLE_TAP_MAX_MS = 400;
 const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
 const MOBILE_SESSION_STORAGE_KEY = 'linka.mobile-session.v1';
+const DEFAULT_TRACKPAD_PROFILE = 'balanced';
+const ACTIVE_TRACKPAD_PROFILE = DEFAULT_TRACKPAD_PROFILE;
+const TRACKPAD_PROFILES = {
+  precision: {
+    id: 'precision',
+    label: 'Precision',
+    minSpeed: 0.12,
+    maxSpeed: 1.1,
+    maxMultiplier: 1.5,
+    smoothing: 0.18,
+    portraitHorizontalBoost: 1,
+  },
+  balanced: {
+    id: 'balanced',
+    label: 'Balanced',
+    minSpeed: 0.1,
+    maxSpeed: 1.3,
+    maxMultiplier: 3,
+    smoothing: 0.2,
+    portraitHorizontalBoost: 1.15,
+  },
+  infinite: {
+    id: 'infinite',
+    label: 'Infinite Reach',
+    minSpeed: 0.08,
+    maxSpeed: 1.15,
+    maxMultiplier: 5.5,
+    smoothing: 0.24,
+    portraitHorizontalBoost: 1.25,
+  },
+};
 
 let socket;
 let reconnectTimer = 0;
@@ -147,6 +178,45 @@ function parseStoredSession(rawValue) {
   } catch (_error) {
     return null;
   }
+}
+
+function resolveTrackpadProfile(profileId) {
+  return TRACKPAD_PROFILES[profileId] || TRACKPAD_PROFILES[DEFAULT_TRACKPAD_PROFILE];
+}
+
+function isPortraitTrackpadLayout() {
+  return (
+    window.matchMedia?.('(orientation: portrait), (max-aspect-ratio: 3 / 4)').matches ||
+    window.innerHeight > window.innerWidth
+  );
+}
+
+function computeAcceleratedTrackpadDelta(rawDx, rawDy, elapsedMs) {
+  const profile = resolveTrackpadProfile(ACTIVE_TRACKPAD_PROFILE);
+  const sampleMs = Math.max(8, Math.min(40, elapsedMs || 16));
+  const speed = Math.hypot(rawDx, rawDy) / sampleMs;
+
+  // Keep slow moves near 1x for precision, then smoothly bend into larger
+  // multipliers as finger speed rises. `smoothstep` avoids abrupt thresholds.
+  const normalizedSpeed = Math.max(
+    0,
+    Math.min(1, (speed - profile.minSpeed) / (profile.maxSpeed - profile.minSpeed)),
+  );
+  const curvedSpeed = normalizedSpeed * normalizedSpeed * (3 - 2 * normalizedSpeed);
+  const targetMultiplier = 1 + curvedSpeed * (profile.maxMultiplier - 1);
+
+  // Smoothly blend toward the target multiplier so momentary timing jitter
+  // does not make the cursor feel like it is surging between move events.
+  track.currentMultiplier += (targetMultiplier - track.currentMultiplier) * profile.smoothing;
+
+  let dx = rawDx * SENSITIVITY * track.currentMultiplier;
+  const dy = rawDy * SENSITIVITY * track.currentMultiplier;
+
+  if (isPortraitTrackpadLayout() && profile.portraitHorizontalBoost > 1) {
+    dx *= profile.portraitHorizontalBoost;
+  }
+
+  return { dx, dy };
 }
 
 function readStoredSession() {
@@ -1253,6 +1323,8 @@ const track = {
   moveFlushTimer: null,
   pendingDx: 0,
   pendingDy: 0,
+  currentMultiplier: 1,
+  lastMoveTime: 0,
   lastTapTime: 0,
   lastTapX: 0,
   lastTapY: 0,
@@ -1360,6 +1432,8 @@ function trackpadTouchStart(event) {
       track.lastY = touch.clientY;
       track.moved = false;
       track.multiTouch = false;
+      track.currentMultiplier = 1;
+      track.lastMoveTime = performance.now();
       resetPinchGesture();
     } else {
       track.multiTouch = true;
@@ -1390,8 +1464,10 @@ function trackpadTouchMove(event) {
   const primary = event.touches[0];
   if (primary.identifier !== track.primaryId) return;
 
-  const dx = (primary.clientX - track.lastX) * SENSITIVITY;
-  const dy = (primary.clientY - track.lastY) * SENSITIVITY;
+  const now = performance.now();
+  const rawDx = primary.clientX - track.lastX;
+  const rawDy = primary.clientY - track.lastY;
+  const { dx, dy } = computeAcceleratedTrackpadDelta(rawDx, rawDy, now - track.lastMoveTime);
   const totalMove = Math.hypot(primary.clientX - track.startX, primary.clientY - track.startY);
 
   if (totalMove > TAP_MOVE_TOLERANCE) {
@@ -1407,6 +1483,7 @@ function trackpadTouchMove(event) {
 
   track.lastX = primary.clientX;
   track.lastY = primary.clientY;
+  track.lastMoveTime = now;
   positionCursorDot({ clientX: primary.clientX, clientY: primary.clientY });
 }
 
@@ -1464,6 +1541,8 @@ function trackpadTouchEnd(event) {
 
     track.primaryId = null;
     track.multiTouch = false;
+    track.currentMultiplier = 1;
+    track.lastMoveTime = 0;
     resetPinchGesture();
     activate(trackpadZone, false);
   } else {
@@ -1479,6 +1558,8 @@ function trackpadTouchCancel(event) {
   track.pointers.clear();
   track.primaryId = null;
   track.multiTouch = false;
+  track.currentMultiplier = 1;
+  track.lastMoveTime = 0;
   resetPinchGesture();
   activate(trackpadZone, false);
   flushPendingMove();

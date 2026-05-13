@@ -25,6 +25,11 @@ import {
 
 // ── Skill generator ──
 import { generateTeachSkill } from '../server/skill-generator.js';
+import {
+  DEFAULT_TRACKPAD_ACCELERATION_PROFILE,
+  computeTrackpadAcceleration,
+  resolveTrackpadAccelerationProfile,
+} from '../shared/trackpad-acceleration.js';
 
 // ═══════════════════════════════════════════════
 // AUTH & CRYPTO
@@ -244,5 +249,56 @@ describe('Skill Generator', () => {
     ];
     const skill = generateTeachSkill('Hint', events, { name: 'TextEdit' });
     assert.ok(skill.includes('TextEdit opens a new document'));
+  });
+});
+
+describe('Trackpad Acceleration', () => {
+  it('keeps very slow movement close to 1x', () => {
+    const result = computeTrackpadAcceleration(1, 0, 16, {
+      sensitivity: 1.45,
+      currentMultiplier: 1,
+      profileId: DEFAULT_TRACKPAD_ACCELERATION_PROFILE,
+      isPortrait: false,
+    });
+    assert.ok(result.multiplier < 1.08, `expected near-1x multiplier, got ${result.multiplier}`);
+    assert.ok(result.dx < 1.6, `expected low acceleration, got dx ${result.dx}`);
+  });
+
+  it('boosts fast movement more strongly in higher reach profiles', () => {
+    const balanced = computeTrackpadAcceleration(18, 0, 12, {
+      sensitivity: 1.45,
+      currentMultiplier: 1,
+      profileId: 'balanced',
+      isPortrait: false,
+    });
+    const infinite = computeTrackpadAcceleration(18, 0, 12, {
+      sensitivity: 1.45,
+      currentMultiplier: 1,
+      profileId: 'infinite',
+      isPortrait: false,
+    });
+    assert.ok(balanced.multiplier > 1.3, `balanced multiplier too small: ${balanced.multiplier}`);
+    assert.ok(infinite.multiplier > balanced.multiplier, 'infinite should accelerate more');
+  });
+
+  it('adds portrait-only horizontal reach for non-precision profiles', () => {
+    const landscape = computeTrackpadAcceleration(10, 0, 16, {
+      sensitivity: 1.45,
+      currentMultiplier: 1.4,
+      profileId: 'balanced',
+      isPortrait: false,
+    });
+    const portrait = computeTrackpadAcceleration(10, 0, 16, {
+      sensitivity: 1.45,
+      currentMultiplier: 1.4,
+      profileId: 'balanced',
+      isPortrait: true,
+    });
+    assert.ok(portrait.dx > landscape.dx, 'portrait horizontal boost should increase dx');
+  });
+
+  it('falls back to the default profile for unknown ids', () => {
+    const resolved = resolveTrackpadAccelerationProfile('unknown-profile');
+    assert.strictEqual(resolved.id, DEFAULT_TRACKPAD_ACCELERATION_PROFILE);
   });
 });
