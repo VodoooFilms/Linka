@@ -82,6 +82,106 @@ function ensureHelperBinary() {
   return tryBuildHelper() ? helperPath : null;
 }
 
+function makeTeachEvent(type, ts, extra = {}) {
+  return {
+    ts,
+    type,
+    x: null,
+    y: null,
+    key: null,
+    modifiers: null,
+    dy: null,
+    source: 'remote_command',
+    ...extra,
+  };
+}
+
+export function normalizeTeachCommandToEvents(command, baseTs = Date.now() / 1000) {
+  const type = typeof command?.type === 'string' ? command.type : '';
+  const events = [];
+  const step = 0.015;
+
+  switch (type) {
+    case 'move':
+      events.push(makeTeachEvent('mouse_moved', baseTs));
+      break;
+    case 'mousedown':
+      events.push(makeTeachEvent(command.button === 'right' ? 'right_down' : 'left_down', baseTs));
+      break;
+    case 'mouseup':
+      events.push(makeTeachEvent(command.button === 'right' ? 'right_up' : 'left_up', baseTs));
+      break;
+    case 'click': {
+      const downType = command.button === 'right' ? 'right_down' : 'left_down';
+      const upType = command.button === 'right' ? 'right_up' : 'left_up';
+      const clickCount = command.double ? 2 : 1;
+      for (let index = 0; index < clickCount; index += 1) {
+        const offset = index * step * 3;
+        events.push(makeTeachEvent(downType, baseTs + offset));
+        events.push(makeTeachEvent(upType, baseTs + offset + step));
+      }
+      break;
+    }
+    case 'scroll':
+      events.push(makeTeachEvent('scroll', baseTs, { dy: Number(command.dy) || 0 }));
+      break;
+    case 'zoom': {
+      const key = command.direction === 'out' ? '-' : '=';
+      events.push(makeTeachEvent('key_combo', baseTs, { key, modifiers: ['cmd'] }));
+      break;
+    }
+    case 'type': {
+      const text = String(command.text || '');
+      for (const [index, char] of Array.from(text).entries()) {
+        events.push(makeTeachEvent('key_combo', baseTs + index * step, { key: char }));
+      }
+      break;
+    }
+    case 'keytap':
+      events.push(
+        makeTeachEvent('key_combo', baseTs, {
+          key: command.key || '?',
+          modifiers: Array.isArray(command.modifiers) && command.modifiers.length > 0
+            ? command.modifiers
+            : null,
+        }),
+      );
+      break;
+    default:
+      break;
+  }
+
+  return events;
+}
+
+function eventsLookEquivalent(left, right) {
+  return (
+    left?.type === right?.type &&
+    (left?.key || null) === (right?.key || null) &&
+    JSON.stringify(left?.modifiers || null) === JSON.stringify(right?.modifiers || null) &&
+    (left?.dy || 0) === (right?.dy || 0)
+  );
+}
+
+export function mergeTeachEventStreams(nativeEvents = [], mirroredEvents = []) {
+  const sorted = [...nativeEvents, ...mirroredEvents].sort((left, right) => left.ts - right.ts);
+  const merged = [];
+
+  for (const event of sorted) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous &&
+      eventsLookEquivalent(previous, event) &&
+      Math.abs((previous.ts || 0) - (event.ts || 0)) <= 0.08
+    ) {
+      continue;
+    }
+    merged.push(event);
+  }
+
+  return merged;
+}
+
 export function createMacOSInputAdapter(onStateChange) {
   if (process.platform !== 'darwin') {
     return null;
@@ -103,6 +203,8 @@ export function createMacOSInputAdapter(onStateChange) {
   let retryCount = 0;
   let retryTimer = null;
   let draining = false;
+  let teachMirrorActive = false;
+  let teachMirroredEvents = [];
   const MAX_RETRIES = 10;
   const RETRY_DELAY_MS = 2000;
   const NON_CRITICAL_COMMANDS = new Set(['move', 'scroll']);
@@ -147,6 +249,10 @@ export function createMacOSInputAdapter(onStateChange) {
     },
     toggleMute() {
       send({ type: 'togglemute' });
+    },
+    recordTeachCommand(command) {
+      if (!teachMirrorActive) return;
+      teachMirroredEvents.push(...normalizeTeachCommandToEvents(command, Date.now() / 1000));
     },
     getVolumeState() {
       return new Promise((resolve) => {
@@ -205,8 +311,11 @@ export function createMacOSInputAdapter(onStateChange) {
     // Hermes Linka: Teach mode — start/stop recording with marker
     teachStart() {
       return new Promise((resolve) => {
+        teachMirrorActive = true;
+        teachMirroredEvents = [];
         const timeout = setTimeout(() => {
           responseResolvers.delete('teach_status');
+          teachMirrorActive = false;
           resolve({ active: false, buffer_count: 0, error: 'timeout' });
         }, 5000);
 
@@ -220,17 +329,27 @@ export function createMacOSInputAdapter(onStateChange) {
     },
     teachStop() {
       return new Promise((resolve) => {
+        teachMirrorActive = false;
         const timeout = setTimeout(() => {
           responseResolvers.delete('teach_events');
           responseResolvers.delete('_teach_events_meta');
           responseResolvers.delete('_teach_events_resolve');
+          teachMirroredEvents = [];
           resolve({ count: 0, events: [], error: 'timeout' });
         }, 10000);
 
         responseResolvers.set('teach_events', (response) => {
           clearTimeout(timeout);
           // Events come via EVENTS_JSON, stash resolve+meta
-          responseResolvers.set('_teach_events_resolve', resolve);
+          responseResolvers.set('_teach_events_resolve', (payload) => {
+            const mergedEvents = mergeTeachEventStreams(payload.events || [], teachMirroredEvents);
+            teachMirroredEvents = [];
+            resolve({
+              ...payload,
+              count: mergedEvents.length,
+              events: mergedEvents,
+            });
+          });
           responseResolvers.set('_teach_events_meta', () => response);
         });
 

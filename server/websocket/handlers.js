@@ -13,6 +13,7 @@ import {
 } from './utils.js';
 
 export function handleCommand(input, data) {
+  input.recordTeachCommand?.(data);
   switch (data.type) {
     case 'move':
       input.move(normalizeNumber(data.dx), normalizeNumber(data.dy));

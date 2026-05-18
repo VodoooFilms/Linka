@@ -33,6 +33,7 @@ private struct CapturedEvent: Codable {
     let key: String?        // virtual key code as hex string e.g. "0x24"
     let modifiers: [String]?
     let dy: Int32?          // scroll delta
+    let source: String?     // desktop_input, remote_command
 }
 
 private struct EventBuffer {
@@ -159,35 +160,35 @@ private func captureEventCallback(
         captured = CapturedEvent(
             ts: now, type: "mouse_moved",
             x: Double(location.x), y: Double(location.y),
-            key: nil, modifiers: nil, dy: nil
+            key: nil, modifiers: nil, dy: nil, source: "desktop_input"
         )
 
     case .leftMouseDown:
         captured = CapturedEvent(
             ts: now, type: "left_down",
             x: Double(location.x), y: Double(location.y),
-            key: nil, modifiers: nil, dy: nil
+            key: nil, modifiers: nil, dy: nil, source: "desktop_input"
         )
 
     case .leftMouseUp:
         captured = CapturedEvent(
             ts: now, type: "left_up",
             x: Double(location.x), y: Double(location.y),
-            key: nil, modifiers: nil, dy: nil
+            key: nil, modifiers: nil, dy: nil, source: "desktop_input"
         )
 
     case .rightMouseDown:
         captured = CapturedEvent(
             ts: now, type: "right_down",
             x: Double(location.x), y: Double(location.y),
-            key: nil, modifiers: nil, dy: nil
+            key: nil, modifiers: nil, dy: nil, source: "desktop_input"
         )
 
     case .rightMouseUp:
         captured = CapturedEvent(
             ts: now, type: "right_up",
             x: Double(location.x), y: Double(location.y),
-            key: nil, modifiers: nil, dy: nil
+            key: nil, modifiers: nil, dy: nil, source: "desktop_input"
         )
 
     case .scrollWheel:
@@ -196,7 +197,7 @@ private func captureEventCallback(
         captured = CapturedEvent(
             ts: now, type: "scroll",
             x: Double(location.x), y: Double(location.y),
-            key: nil, modifiers: nil, dy: Int32(deltaY)
+            key: nil, modifiers: nil, dy: Int32(deltaY), source: "desktop_input"
         )
 
     case .keyDown:
@@ -226,14 +227,14 @@ private func captureEventCallback(
         captured = CapturedEvent(
             ts: now, type: "key_combo",
             x: nil, y: nil,
-            key: keyName, modifiers: mods.isEmpty ? nil : mods, dy: nil
+            key: keyName, modifiers: mods.isEmpty ? nil : mods, dy: nil, source: "desktop_input"
         )
 
     case .leftMouseDragged:
         captured = CapturedEvent(
             ts: now, type: "mouse_drag",
             x: Double(location.x), y: Double(location.y),
-            key: nil, modifiers: nil, dy: nil
+            key: nil, modifiers: nil, dy: nil, source: "desktop_input"
         )
 
     default:
