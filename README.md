@@ -19,7 +19,7 @@ Linka has three local modes:
 
 - Remote mode: phone-based trackpad, keyboard, scroll, mouse, volume, and mute controls.
 - Bridge mode: a temporary local space for sending text, images, and small files between phone and PC over the same WebSocket connection.
-- **Teach mode** (macOS only): record mouse clicks, drags, and keystrokes as reusable Hermes Agent skills so your AI assistant can replay your workflows.
+- **Teach mode** (macOS only): record local desktop workflows as reusable Linka skills for later review and agent execution.
 
 ## Screenshots
 
@@ -46,27 +46,41 @@ Linka has three local modes:
 - **Reconnect persistence**: once paired, the mobile client can automatically rejoin the current desktop session after a refresh or browser reopen.
 - Native input backends for Windows and macOS.
 - Portable Windows Electron build with a bundled native input helper.
-- **Teach Mode** (macOS): record and replay GUI workflows as Hermes Agent skills.
-- **Hermes integration**: auto-generated skill files with screenshots, window bounds, and replay instructions.
+- **Teach Mode** (macOS): record local desktop workflows as Linka-owned skill artifacts with Codex-friendly intent and state context.
+- **Hermes integration**: raw capture export and inbox suggestions remain available for experiments.
 
-## Hermes Integration (macOS only)
+## Teach Skills (macOS only)
 
-Linka includes a Teach Mode that records GUI interactions and saves them as [Hermes Agent](https://hermes-agent.nousresearch.com/docs) skills. Hermes can replay recorded workflows using CGEvent simulation.
+Linka includes a Teach Mode that records GUI interactions and saves them as Linka-owned local skill recordings. The saved artifact is descriptive and approval-oriented: it keeps intent, app context, sanitized event history, and an end-state screenshot, but it intentionally drops screen coordinates.
 
 ### How it works
 
-1. Click **Teach** in Linka's top bar to start recording. Any mouse click, drag, or keystroke is captured through the CGEvent tap.
-2. Click Teach again to stop. Enter a name, optionally describe what you did ("Write 'hello' in Notes"), and save. Linka writes a skill file to `~/.hermes/skills/linka/<name>.md`.
-3. The skill file includes:
-   - Timestamped click coordinates and action types.
-   - A reference screenshot (`<name>.png`) captured at recording time.
-   - The frontmost window position at recording time (for coordinate offset calculation if windows move).
-   - Replay instructions for Hermes.
-4. Hermes loads the skill and replays the steps using CGEvent mouse/keyboard simulation, applying window position offsets when available.
+1. Click **Teach** in Linka's top bar to start recording. Teach listens to local desktop mouse and keyboard input through the macOS CGEvent tap and also mirrors remote control commands coming from the mobile controller, so mixed workflows can be reconstructed as one skill.
+2. Click Teach again to stop. Enter a name, optionally describe what you did ("Write 'hello' in Notes"), and save. Linka writes a structured recording to `~/.linka/teach/recordings/<name>.json` and a Codex-oriented companion prompt to `~/.linka/teach/recordings/<name>.md`.
+3. The recording includes:
+   - Sanitized action history without screen coordinates.
+   - The inferred target app and app history.
+   - A reference screenshot (`~/.linka/teach/screenshots/<name>.png`) captured after recording stops, so it reflects the end-state Codex should inspect.
+   - Extracted semantic parameters when the intent includes them, such as quoted text or calculator operands.
+   - Source-aware event metadata showing whether observed actions came from `desktop_input` or `remote_command`.
+   - An approval-oriented summary for later toolization plus a Markdown companion the agent can read directly.
+4. These skills are meant to be reviewed and called safely later, not replayed blindly as raw desktop automation. Codex should resolve a named UI action from the artifact and current UI state before executing.
+
+### What Codex can recover well
+
+- Named calculator workflows when the prompt or screenshot makes the operands visible.
+- Text-entry workflows when the prompt includes quoted text.
+- App-level flows like opening a focused app, minimizing a window, or creating a new project when the end-state screenshot clearly shows the result.
+
+### Current limitations
+
+- Pointer-heavy workflows with ambiguous UI targets still need screenshot inspection and sometimes user confirmation.
+- If the user prompt omits semantic parameters, Codex may need to infer them from the end-state screenshot instead of the event history alone.
+- Teach records action intent better than geometry; it is intentionally not a coordinate replay system.
 
 ### Why this exists
 
-GUI automation without an API: do a workflow once, Hermes replays it. Useful for repetitive tasks in apps with no CLI, form filling, file organization, or any point-and-click sequence you run often.
+This is the first step toward reusable local desktop skills that complement coding workflows without turning Linka into a generic autonomous agent.
 
 ### Permissions
 
@@ -74,20 +88,28 @@ Uses the same `Accessibility` permission Linka already needs. No extra grants re
 
 ### Skill discovery
 
-Skills live in `~/.hermes/skills/linka/`. Hermes Agent auto-discovers and loads them from that directory.
+Skills live in `~/.linka/teach/recordings/`.
+
+## Hermes Integration (experimental)
+
+Hermes-specific capture export still exists for the inbox flow:
+
+- Raw CGEvent dumps can still be written to `~/.hermes/linka/inbox/`.
+- `GET /hermes/suggest` still clusters repeated captures for experimentation.
+- Teach save no longer writes Hermes markdown skills by default.
 
 ### Bridge events
 
-Raw CGEvent data is available via `GET /hermes/events` (HTTP) or through WebSocket bridge events. Hermes can ingest these programmatically for pattern detection or workflow analysis.
+Raw CGEvent data is available via `GET /hermes/events` (HTTP) or through WebSocket bridge events. This is mainly for local capture analysis and experimental workflow clustering.
 
 ### Hotkey
 
-`Cmd+Shift+Option+L` flushes the current CGEvent tap buffer to `~/.hermes/linka/inbox/`. Hermes ingests and summarizes these captures automatically.
+`Cmd+Shift+Option+L` flushes the current CGEvent tap buffer to `~/.hermes/linka/inbox/` for the experimental inbox flow.
 
 ## Platform Status
 
 - Windows: full desktop support, native input helper, Windows packaging scripts, installer and portable build flow.
-- macOS: desktop support is available and tested for local use. Mouse, click, right click, scroll, keyboard, volume, and mute work through the native macOS helper. Teach Mode and Hermes integration are **exclusive to macOS** (CGEvent tap + Swift window bounds + Electron desktopCapturer).
+- macOS: desktop support is available and tested for local use. Mouse, click, right click, scroll, keyboard, volume, and mute work through the native macOS helper. Teach Mode and Hermes experimental capture flows are **exclusive to macOS** (CGEvent tap + Electron desktopCapturer), with Teach now merging local desktop input and mobile-driven remote commands into the same recording artifact.
 - macOS packaging is currently intended for local builds and internal testing. Windows packaging remains the more complete release path today.
 
 ### Security
@@ -183,7 +205,7 @@ npm run build:native:mac
 - Use Right for right-click.
 - Use Keyboard to open mobile typing controls with Backspace, Esc, and Tab shortcuts. On macOS, the shortcut modifier is shown as `⌘`; on Windows, it remains `Ctrl`.
 - Use Mute and Volume for desktop audio control. The volume slider syncs to the desktop's actual level on connect.
-- Use **Teach** (macOS) to record mouse clicks and keystrokes as Hermes Agent skills. Click to start recording, click again to stop and save.
+- Use **Teach** (macOS) to record local desktop workflows as Linka skills for later review and agent execution. A single recording can include local desktop input, mobile-driven remote control input, or a mix of both.
 - Use Bridge to switch into a clean transfer panel for sending text snippets and images between phone and PC.
 - Tap Capture in Bridge to screenshot the PC screen.
 - Use Copy on text items and Download on image items. Bridge data is RAM-only and disappears when the app/server restarts.

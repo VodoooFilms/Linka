@@ -16,7 +16,7 @@ import {
   getBridgeContentBytes,
 } from './server/utils.js';
 import { resolveDefaultPort, getConnectionInfo } from './server/network.js';
-import { generateTeachSkill } from './server/skill-generator.js';
+import { buildTeachRecording, renderTeachSkillMarkdown } from './server/teach/recording.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,6 +118,7 @@ function normalizeNumber(value, fallback = 0, min = -500, max = 500) {
 }
 
 function handleCommand(input, data) {
+  input.recordTeachCommand?.(data);
   switch (data.type) {
     case 'move':
       input.move(normalizeNumber(data.dx), normalizeNumber(data.dy));
@@ -724,6 +725,35 @@ export async function startServer(options = {}) {
     }
   }
 
+  async function captureTeachScreenshot() {
+    if (captureScreen && typeof captureScreen === 'function') {
+      try {
+        return await captureScreen();
+      } catch (err) {
+        console.warn('[teach] Screenshot capture failed:', err?.message || err);
+      }
+    }
+
+    if (process.platform === 'darwin') {
+      try {
+        const { execSync } = await import('child_process');
+        const tmpPath = '/tmp/linka_teach_screenshot.png';
+        execSync(`screencapture -x -C -t png "${tmpPath}"`, { timeout: 5000 });
+        const buf = fs.readFileSync(tmpPath);
+        fs.unlinkSync(tmpPath);
+        console.log('[teach] Reference screenshot captured via screencapture fallback.');
+        return `data:image/png;base64,${buf.toString('base64')}`;
+      } catch (fallbackErr) {
+        console.warn(
+          '[teach] Screencapture fallback also failed:',
+          fallbackErr?.message || fallbackErr,
+        );
+      }
+    }
+
+    return null;
+  }
+
   if (process.env.NODE_ENV === 'production') {
     const staticRoot = path.join(__dirname, 'dist');
     console.log(`[static] Serving production files from ${staticRoot}`);
@@ -845,41 +875,7 @@ export async function startServer(options = {}) {
           if (typeof input.teachStart === 'function') {
             try {
               const status = await input.teachStart();
-              // Phase 2: Capture reference screenshot and window bounds
-              if (captureScreen && typeof captureScreen === 'function') {
-                try {
-                  ws._teachScreenshot = await captureScreen();
-                  console.log('[teach] Reference screenshot captured.');
-                } catch (err) {
-                  console.warn('[teach] Screenshot capture failed:', err?.message || err);
-                  ws._teachScreenshot = null;
-                }
-              }
-              // Fallback: use macOS screencapture CLI when Electron desktopCapturer fails
-              if (!ws._teachScreenshot && process.platform === 'darwin') {
-                try {
-                  const { execSync } = await import('child_process');
-                  const tmpPath = '/tmp/linka_teach_screenshot.png';
-                  execSync(`screencapture -x -C -t png "${tmpPath}"`, { timeout: 5000 });
-                  const fs = await import('fs');
-                  const buf = fs.readFileSync(tmpPath);
-                  ws._teachScreenshot = `data:image/png;base64,${buf.toString('base64')}`;
-                  fs.unlinkSync(tmpPath);
-                  console.log('[teach] Reference screenshot captured via screencapture fallback.');
-                } catch (fallbackErr) {
-                  console.warn(
-                    '[teach] Screencapture fallback also failed:',
-                    fallbackErr?.message || fallbackErr,
-                  );
-                  ws._teachScreenshot = null;
-                }
-              }
-              ws._teachWindowBounds = await getWindowBounds();
-              if (ws._teachWindowBounds) {
-                console.log(
-                  `[teach] Window bounds: ${ws._teachWindowBounds.x},${ws._teachWindowBounds.y} ${ws._teachWindowBounds.width}x${ws._teachWindowBounds.height}`,
-                );
-              }
+              ws._teachScreenshot = null;
               sendJson(ws, { event: 'teach_status', payload: status });
             } catch (error) {
               sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
@@ -896,6 +892,10 @@ export async function startServer(options = {}) {
           if (typeof input.teachStop === 'function') {
             try {
               const result = await input.teachStop();
+              ws._teachScreenshot = await captureTeachScreenshot();
+              if (ws._teachScreenshot) {
+                console.log('[teach] Reference screenshot captured after recording stopped.');
+              }
               sendJson(ws, { event: 'teach_events', payload: result });
             } catch (error) {
               sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
@@ -917,13 +917,15 @@ export async function startServer(options = {}) {
             return;
           }
           try {
-            const skillDir = path.join(os.homedir(), '.hermes', 'skills', 'linka');
-            fs.mkdirSync(skillDir, { recursive: true });
             const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
-            const filePath = path.join(skillDir, `${safeName}.md`);
+            const recordingsDir = path.join(os.homedir(), '.linka', 'teach', 'recordings');
+            const screenshotsDir = path.join(os.homedir(), '.linka', 'teach', 'screenshots');
+            fs.mkdirSync(recordingsDir, { recursive: true });
+            fs.mkdirSync(screenshotsDir, { recursive: true });
+            const filePath = path.join(recordingsDir, `${safeName}.json`);
+            const markdownPath = path.join(recordingsDir, `${safeName}.md`);
 
-            // Phase 2: Save reference screenshot alongside skill
-            let hasScreenshot = false;
+            let screenshotPath = null;
             const screenshot = ws._teachScreenshot;
             if (
               screenshot &&
@@ -931,32 +933,38 @@ export async function startServer(options = {}) {
               screenshot.startsWith('data:image/')
             ) {
               try {
-                const screenshotPath = path.join(skillDir, `${safeName}.png`);
+                screenshotPath = path.join(screenshotsDir, `${safeName}.png`);
                 const base64Data = screenshot.replace(/^data:image\/\w+;base64,/, '');
                 fs.writeFileSync(screenshotPath, Buffer.from(base64Data, 'base64'));
-                hasScreenshot = true;
                 console.log(`[teach] Screenshot saved: ${screenshotPath}`);
               } catch (_) {
-                /* non-fatal */
+                screenshotPath = null;
               }
             }
             delete ws._teachScreenshot;
 
-            const content = generateTeachSkill(
-              name,
-              events,
-              app || {},
-              hasScreenshot,
-              ws._teachWindowBounds,
-              app_history || null,
-              user_prompt || null,
-            );
-            delete ws._teachWindowBounds;
-            fs.writeFileSync(filePath, content);
-            console.log(`[teach] Skill saved: ${filePath}`);
+            const recording = buildTeachRecording(name, events, {
+              app: app || {},
+              appHistory: app_history || null,
+              userPrompt: user_prompt || null,
+              screenshotPath,
+              screenshotStage: screenshotPath ? 'after_recording_before_review' : 'not_captured',
+            });
+            recording.skill_prompt_markdown = markdownPath;
+            const markdown = renderTeachSkillMarkdown(recording);
+
+            fs.writeFileSync(filePath, JSON.stringify(recording, null, 2));
+            fs.writeFileSync(markdownPath, markdown);
+            console.log(`[teach] Recording saved: ${filePath}`);
             sendJson(ws, {
               event: 'teach_saved',
-              payload: { name: safeName, path: filePath, hasScreenshot },
+              payload: {
+                name: safeName,
+                path: filePath,
+                markdownPath,
+                screenshotPath,
+                kind: recording.kind,
+              },
             });
           } catch (error) {
             console.error('[teach] Save failed:', error);

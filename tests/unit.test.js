@@ -23,8 +23,10 @@ import {
   resolveDefaultPort,
 } from '../server/network.js';
 
-// ── Skill generator ──
-import { generateTeachSkill } from '../server/skill-generator.js';
+// ── Teach recording ──
+import { buildTeachRecording, renderTeachSkillMarkdown } from '../server/teach/recording.js';
+import { createTeachMessageHandler } from '../server/hermes/teach-handler.js';
+import { mergeTeachEventStreams, normalizeTeachCommandToEvents } from '../platform/input/macos.js';
 import {
   DEFAULT_TRACKPAD_ACCELERATION_PROFILE,
   computeTrackpadAcceleration,
@@ -131,11 +133,11 @@ describe('Network Scoring', () => {
 });
 
 // ═══════════════════════════════════════════════
-// SKILL GENERATOR
+// TEACH RECORDING
 // ═══════════════════════════════════════════════
 
-describe('Skill Generator', () => {
-  it('generates skill with keystrokes only', () => {
+describe('Teach Recording', () => {
+  it('builds a local skill with keystrokes only', () => {
     const events = [
       { ts: 1000, type: 'key_combo', key: 'h', modifiers: null },
       { ts: 1100, type: 'key_combo', key: 'e', modifiers: null },
@@ -143,28 +145,30 @@ describe('Skill Generator', () => {
       { ts: 1300, type: 'key_combo', key: 'l', modifiers: null },
       { ts: 1400, type: 'key_combo', key: 'o', modifiers: null },
     ];
-    const skill = generateTeachSkill('Test Type', events, { name: 'TextEdit' });
-    assert.ok(skill.includes('name: test-type'));
-    assert.ok(skill.includes('app: TextEdit'));
-    assert.ok(skill.includes('has_keyboard: true'));
-    assert.ok(skill.includes('has_clicks: false'));
-    // Consecutive same keys are grouped: h, e, ll, o
-    assert.ok(skill.includes('Press h'));
-    assert.ok(skill.includes('Press e'));
-    assert.ok(skill.includes('Type "ll"'));
-    assert.ok(skill.includes('Press o'));
+    const recording = buildTeachRecording('Test Type', events, { app: { name: 'TextEdit' } });
+    assert.equal(recording.id, 'test-type');
+    assert.equal(recording.target.app_name, 'TextEdit');
+    assert.equal(recording.summary.has_keyboard, true);
+    assert.equal(recording.summary.has_pointer, false);
+    assert.deepEqual(recording.summary.action_labels, [
+      'Press h',
+      'Press e',
+      'Type "ll" (2 keystrokes)',
+      'Press o',
+    ]);
   });
 
-  it('generates skill with clicks', () => {
+  it('removes coordinates from persisted click recordings', () => {
     const events = [
       { ts: 1000, type: 'mouse_moved', x: 100, y: 200 },
       { ts: 1100, type: 'left_down', x: 100, y: 200 },
       { ts: 1150, type: 'left_up', x: 100, y: 200 },
     ];
-    const skill = generateTeachSkill('Test Click', events, { name: 'Safari' });
-    assert.ok(skill.includes('has_clicks: true'));
-    assert.ok(skill.includes('Click at (100, 200)'));
-    assert.ok(skill.includes('app: Safari'));
+    const recording = buildTeachRecording('Test Click', events, { app: { name: 'Safari' } });
+    assert.equal(recording.summary.has_pointer, true);
+    assert.deepEqual(recording.summary.action_labels, ['Click']);
+    assert.ok(recording.events.every((event) => !Object.hasOwn(event, 'x')));
+    assert.ok(recording.events.every((event) => !Object.hasOwn(event, 'y')));
   });
 
   it('detects dock switch from app history', () => {
@@ -173,82 +177,249 @@ describe('Skill Generator', () => {
       { app: 'Linka', ts: 1000 },
       { app: 'TextEdit', ts: 2000 },
     ];
-    const skill = generateTeachSkill('Dock Test', events, {}, false, null, appHistory);
-    assert.ok(skill.includes('dock_switch: Linka → TextEdit'));
-    assert.ok(skill.includes('app: TextEdit'));
+    const recording = buildTeachRecording('Dock Test', events, { appHistory });
+    assert.deepEqual(recording.target.dock_switch, { from: 'Linka', to: 'TextEdit' });
+    assert.equal(recording.target.app_name, 'TextEdit');
   });
 
-  it('handles user prompt as authoritative intent', () => {
+  it('uses user prompt as authoritative intent', () => {
     const events = [{ ts: 1000, type: 'key_combo', key: 'x', modifiers: null }];
-    const skill = generateTeachSkill(
-      'Prompt Test',
-      events,
-      { name: 'Notes' },
-      false,
-      null,
-      null,
-      'Write meeting notes',
-    );
-    assert.ok(skill.includes('**User said:** "Write meeting notes"'));
-    assert.ok(skill.includes('**Intent:** Write meeting notes'));
+    const recording = buildTeachRecording('Prompt Test', events, {
+      app: { name: 'Notes' },
+      userPrompt: 'Write meeting notes',
+    });
+    assert.equal(recording.guidance.user_intent, 'Write meeting notes');
+    assert.equal(recording.guidance.summary, 'Write meeting notes');
   });
 
   it('handles empty events gracefully', () => {
-    const skill = generateTeachSkill('Empty', [], { name: 'Finder' });
-    assert.ok(skill.includes('name: empty'));
-    assert.ok(skill.includes('_No actions extracted_'));
-    assert.ok(skill.includes('has_clicks: false'));
-    assert.ok(skill.includes('has_keyboard: false'));
+    const recording = buildTeachRecording('Empty', [], { app: { name: 'Finder' } });
+    assert.equal(recording.id, 'empty');
+    assert.deepEqual(recording.summary.action_labels, []);
+    assert.equal(recording.summary.has_pointer, false);
+    assert.equal(recording.summary.has_keyboard, false);
   });
 
-  it('generates screenshot section when hasScreenshot is true', () => {
+  it('stores screenshot path when available', () => {
     const events = [{ ts: 1000, type: 'key_combo', key: 'a', modifiers: null }];
-    const skill = generateTeachSkill('Screenshot', events, { name: 'Safari' }, true);
-    assert.ok(skill.includes('📸 Reference Screenshot'));
-    assert.ok(skill.includes('vision_analyze'));
+    const recording = buildTeachRecording('Screenshot', events, {
+      app: { name: 'Safari' },
+      screenshotPath: '/tmp/screenshot.png',
+    });
+    assert.equal(recording.assets.has_screenshot, true);
+    assert.equal(recording.assets.screenshot_path, '/tmp/screenshot.png');
+    assert.equal(recording.assets.screenshot_stage, 'after_recording_before_review');
   });
 
-  it('generates right-click actions', () => {
+  it('preserves event source metadata for teach recordings', () => {
+    const recording = buildTeachRecording('Source Test', [
+      { ts: 1000, type: 'left_down', source: 'desktop_input' },
+      { ts: 1001, type: 'left_up', source: 'remote_command' },
+    ]);
+    assert.deepEqual(recording.summary.event_sources.sort(), ['desktop_input', 'remote_command']);
+    assert.equal(recording.events[0].source, 'desktop_input');
+  });
+
+  it('adds codex-friendly reading instructions for future skills', () => {
+    const events = [
+      { ts: 1000, type: 'left_down', x: 50, y: 60 },
+      { ts: 1050, type: 'left_up', x: 50, y: 60 },
+    ];
+    const recording = buildTeachRecording('Codex Guide', events, {
+      app: { name: 'Linka' },
+      userPrompt: 'Minimize the Linka window',
+      screenshotPath: '/tmp/linka-shot.png',
+    });
+    assert.equal(recording.codex.purpose, 'codex_local_desktop_skill');
+    assert.equal(recording.codex.read_this_first, 'Minimize the Linka window');
+    assert.equal(recording.codex.targeting_strategy.primary_signal, 'guidance.user_intent');
+    assert.equal(recording.codex.execution_contract.required_approval, true);
+    assert.ok(recording.codex.review_order.includes('Open assets.screenshot_path and inspect the UI state.'));
+    assert.equal(recording.codex.semantic_target.status, 'partially_resolved');
+    assert.equal(recording.codex.semantic_target.candidate_actions[0].action, 'minimize_linka_window');
+    assert.deepEqual(recording.presentation.codex_should_read, [
+      'guidance.user_intent',
+      'target.app_name',
+      'assets.screenshot_path',
+      'codex.semantic_target',
+    ]);
+  });
+
+  it('presents calculator multiplication as a semantic workflow, not just clicks', () => {
+    const events = [
+      { ts: 1000, type: 'left_down', x: 10, y: 10 },
+      { ts: 1020, type: 'left_up', x: 10, y: 10 },
+    ];
+    const recording = buildTeachRecording('Multiplicacion', events, {
+      appHistory: [
+        { app: 'Linka', ts: 1000 },
+        { app: 'Calculator', ts: 2000 },
+      ],
+      userPrompt: 'Uso de calculadora y multiplicación',
+      screenshotPath: '/tmp/calc-shot.png',
+    });
+    assert.equal(recording.presentation.semantic_readiness, 'partially_resolved');
+    assert.equal(recording.target.app_name, 'Calculator');
+    assert.ok(
+      recording.codex.semantic_target.candidate_actions.some(
+        (candidate) => candidate.action === 'calculator_multiply',
+      ),
+    );
+  });
+
+  it('extracts calculator operands when the intent includes the full expression', () => {
+    const recording = buildTeachRecording('Multiplicacion Exacta', [], {
+      appHistory: [
+        { app: 'Linka', ts: 1000 },
+        { app: 'Calculator', ts: 2000 },
+      ],
+      userPrompt: 'Usa calculadora abrela y haz 47 x 98',
+      screenshotPath: '/tmp/calc-shot.png',
+    });
+    const multiply = recording.codex.semantic_target.candidate_actions.find(
+      (candidate) => candidate.action === 'calculator_multiply',
+    );
+    assert.deepEqual(multiply.params, { operands: ['47', '98'] });
+    assert.equal(recording.codex.semantic_target.primary_action, 'calculator_multiply');
+  });
+
+  it('extracts text parameters for text entry workflows', () => {
+    const events = [{ ts: 1000, type: 'key_combo', key: 'h', modifiers: null }];
+    const recording = buildTeachRecording('Text Entry', events, {
+      app: { name: 'Notes' },
+      userPrompt: 'Escribe "hola mundo" en Notes',
+    });
+    const enterText = recording.codex.semantic_target.candidate_actions.find(
+      (candidate) => candidate.action === 'enter_text',
+    );
+    assert.deepEqual(enterText.params, { text: 'hola mundo' });
+    assert.equal(recording.codex.semantic_target.extracted_parameters.typed_text, 'hola mundo');
+  });
+
+  it('renders a markdown skill companion with structured parameters', () => {
+    const recording = buildTeachRecording('Markdown Skill', [], {
+      app: { name: 'Calculator' },
+      userPrompt: 'Usa calculadora y haz 47 x 98',
+      screenshotPath: '/tmp/final-state.png',
+    });
+    const markdown = renderTeachSkillMarkdown(recording);
+    assert.match(markdown, /# Linka Teach Skill Prompt/);
+    assert.match(markdown, /## Intended Action\ncalculator_multiply/);
+    assert.match(markdown, /- operator: multiply/);
+    assert.match(markdown, /- operands: 47, 98/);
+    assert.match(markdown, /Use the screenshot as end-state context/);
+  });
+
+  it('summarizes right-click actions without coordinates', () => {
     const events = [
       { ts: 1000, type: 'right_down', x: 50, y: 60 },
       { ts: 1050, type: 'right_up', x: 50, y: 60 },
     ];
-    const skill = generateTeachSkill('RightClick', events, { name: 'Finder' });
-    assert.ok(skill.includes('Right-click at (50, 60)'));
-    assert.ok(skill.includes('right-click 1 time'));
+    const recording = buildTeachRecording('RightClick', events, { app: { name: 'Finder' } });
+    assert.deepEqual(recording.summary.action_labels, ['Right-click']);
+    assert.equal(recording.execution.coordinates_removed, true);
   });
 
-  it('handles key combos with modifiers', () => {
+  it('preserves key combos with modifiers', () => {
     const events = [
       { ts: 1000, type: 'key_combo', key: 'n', modifiers: ['cmd'] },
       { ts: 1100, type: 'key_combo', key: 'v', modifiers: ['cmd'] },
     ];
-    const skill = generateTeachSkill('Combos', events, { name: 'TextEdit' });
-    assert.ok(skill.includes('Press cmd+n'));
-    assert.ok(skill.includes('Press cmd+v'));
+    const recording = buildTeachRecording('Combos', events, { app: { name: 'TextEdit' } });
+    assert.deepEqual(recording.summary.action_labels, ['Press cmd+n', 'Press cmd+v']);
   });
 
-  it('handles scroll events', () => {
+  it('keeps scroll direction and amount', () => {
     const events = [{ ts: 1000, type: 'scroll', x: 100, y: 200, dy: -120 }];
-    const skill = generateTeachSkill('Scroll', events, { name: 'Safari' });
-    assert.ok(skill.includes('Scroll up 120px'));
-    assert.ok(skill.includes('scroll'));
+    const recording = buildTeachRecording('Scroll', events, { app: { name: 'Safari' } });
+    assert.deepEqual(recording.summary.action_labels, ['Scroll up 120px']);
+    assert.deepEqual(recording.events, [{ ts: 1000, type: 'scroll', dy: -120 }]);
   });
 
-  it('unknown app generates cautious replay instructions', () => {
+  it('keeps unknown app recordings generic', () => {
     const events = [{ ts: 1000, type: 'key_combo', key: 'a', modifiers: null }];
-    const skill = generateTeachSkill('Unknown', events, {});
-    assert.ok(skill.includes('App unknown'));
-    assert.ok(skill.includes('qué app estabas usando'));
+    const recording = buildTeachRecording('Unknown', events, {});
+    assert.equal(recording.target.app_name, 'unknown');
+    assert.equal(recording.guidance.parameterization.app_focus, false);
   });
 
-  it('includes app hints for known apps', () => {
+  it('marks mixed pointer and keyboard flows as high risk', () => {
     const events = [
       { ts: 1000, type: 'left_down', x: 10, y: 10 },
       { ts: 1100, type: 'left_up', x: 10, y: 10 },
+      { ts: 1200, type: 'key_combo', key: 'a', modifiers: null },
     ];
-    const skill = generateTeachSkill('Hint', events, { name: 'TextEdit' });
-    assert.ok(skill.includes('TextEdit opens a new document'));
+    const recording = buildTeachRecording('Hint', events, { app: { name: 'TextEdit' } });
+    assert.equal(recording.execution.risk_level, 'high');
+  });
+
+  it('captures the screenshot after recording stops, not when it starts', async () => {
+    const statusMessages = [];
+    const input = {
+      async teachStart() {
+        return { active: true };
+      },
+      async teachStop() {
+        return { events: [{ ts: 1, type: 'left_down' }], app_name: 'Linka', app_history: [] };
+      },
+    };
+    const ws = {};
+    const handler = createTeachMessageHandler({
+      input,
+      captureScreen: async () => 'data:image/png;base64,ZmFrZQ==',
+      sendJson(_ws, payload) {
+        statusMessages.push(payload);
+      },
+    });
+
+    await handler(ws, { type: 'teach_start' });
+    assert.equal(ws._teachScreenshot, null);
+
+    await handler(ws, { type: 'teach_stop' });
+    assert.equal(ws._teachScreenshot, 'data:image/png;base64,ZmFrZQ==');
+    assert.equal(statusMessages[1].event, 'teach_events');
+  });
+});
+
+describe('Teach Command Mirroring', () => {
+  it('normalizes remote click and key commands into teach events', () => {
+    const clickEvents = normalizeTeachCommandToEvents({ type: 'click', button: 'left', double: true }, 1000);
+    const keyEvents = normalizeTeachCommandToEvents({ type: 'keytap', key: 'v', modifiers: ['cmd'] }, 1001);
+    assert.deepEqual(clickEvents.map((event) => event.type), [
+      'left_down',
+      'left_up',
+      'left_down',
+      'left_up',
+    ]);
+    assert.equal(clickEvents[0].source, 'remote_command');
+    assert.deepEqual(keyEvents[0], {
+      ts: 1001,
+      type: 'key_combo',
+      x: null,
+      y: null,
+      key: 'v',
+      modifiers: ['cmd'],
+      dy: null,
+      source: 'remote_command',
+    });
+  });
+
+  it('merges native and mirrored teach events without duplicating equivalent actions', () => {
+    const merged = mergeTeachEventStreams(
+      [
+        { ts: 1000, type: 'left_down', source: 'desktop_input' },
+        { ts: 1000.02, type: 'left_up', source: 'desktop_input' },
+      ],
+      [
+        { ts: 1000.01, type: 'left_down', source: 'remote_command' },
+        { ts: 1000.03, type: 'left_up', source: 'remote_command' },
+        { ts: 1001, type: 'key_combo', key: '2', modifiers: null, source: 'remote_command' },
+      ],
+    );
+    assert.deepEqual(
+      merged.map((event) => `${event.type}:${event.source}`),
+      ['left_down:desktop_input', 'left_up:desktop_input', 'key_combo:remote_command'],
+    );
   });
 });
 
