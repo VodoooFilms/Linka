@@ -203,6 +203,7 @@ export function createMacOSInputAdapter(onStateChange) {
   let retryCount = 0;
   let retryTimer = null;
   let draining = false;
+  let shuttingDown = false;
   let teachMirrorActive = false;
   let teachMirroredEvents = [];
   const MAX_RETRIES = 10;
@@ -270,6 +271,7 @@ export function createMacOSInputAdapter(onStateChange) {
       });
     },
     close() {
+      shuttingDown = true;
       if (retryTimer) clearTimeout(retryTimer);
       if (volumeFlushTimer) clearTimeout(volumeFlushTimer);
       if (alive && helper) {
@@ -540,6 +542,7 @@ export function createMacOSInputAdapter(onStateChange) {
 
     helper.once('exit', (code, signal) => {
       alive = false;
+      if (shuttingDown) return;
       console.warn(`[input:macos] helper exited code=${code} signal=${signal}`);
       adapter.ready = false;
       adapter.name = 'macos-quartz (unavailable)';
@@ -548,6 +551,7 @@ export function createMacOSInputAdapter(onStateChange) {
 
     helper.once('error', (error) => {
       alive = false;
+      if (shuttingDown) return;
       console.warn(`[input:macos] helper failed: ${error.message}`);
       adapter.ready = false;
       adapter.name = 'macos-quartz (unavailable)';
@@ -600,6 +604,7 @@ export function createMacOSInputAdapter(onStateChange) {
   }
 
   process.once('exit', () => {
+    shuttingDown = true;
     if (retryTimer) clearTimeout(retryTimer);
     if (volumeFlushTimer) clearTimeout(volumeFlushTimer);
     if (alive && helper) {
