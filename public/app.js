@@ -76,6 +76,10 @@ const TAP_MOVE_TOLERANCE = 20;  // fingers jitter more than mice; 7px was too st
 const DOUBLE_TAP_MAX_MS = 400;
 const MAX_BRIDGE_FILE_BYTES = 5 * 1024 * 1024;
 const MOBILE_SESSION_STORAGE_KEY = 'linka.mobile-session.v1';
+const MOBILE_DEVICE_ID_STORAGE_KEY = 'linka.mobile-device-id.v1';
+const HEALTHY_PONG_WINDOW_MS = 8000;
+const MAX_CONNECTING_AGE_MS = 10000;
+const VISIBILITY_RECONNECT_THRESHOLD_MS = 15000;
 const DEFAULT_TRACKPAD_PROFILE = 'balanced';
 const ACTIVE_TRACKPAD_PROFILE = DEFAULT_TRACKPAD_PROFILE;
 const TRACKPAD_PROFILES = {
@@ -117,6 +121,7 @@ let isAuthenticated = false;
 let lastPongReceived = Date.now();
 let heartbeatInterval = null;
 let lastServerHello = null;
+let lastCloseContext = null;
 let keyboardOpen = false;
 let ctrlArmed = false;
 let shortcutModifier = 'ctrl';
@@ -129,6 +134,9 @@ let teachRecording = false;
 let teachPendingPayload = null;  // stash teach_events payload for save
 let pendingPairingParams = readPairingParamsFromUrl();
 let manualDisconnect = false;
+let connectGeneration = 0;
+let activeConnectGeneration = 0;
+let lastConnectStartedAt = 0;
 
 const bridgeSource = window.matchMedia?.('(pointer: coarse)').matches ? 'phone' : 'pc';
 
@@ -223,6 +231,27 @@ function readStoredSession() {
   return parseStoredSession(window.localStorage.getItem(MOBILE_SESSION_STORAGE_KEY));
 }
 
+function generateDeviceId() {
+  return (
+    window.crypto?.randomUUID?.() ||
+    `device-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+}
+
+function readStoredDeviceId() {
+  const rawValue = window.localStorage.getItem(MOBILE_DEVICE_ID_STORAGE_KEY);
+  return typeof rawValue === 'string' && rawValue.trim() ? rawValue.trim() : '';
+}
+
+function ensureDeviceId() {
+  const existing = readStoredDeviceId();
+  if (existing) return existing;
+
+  const next = generateDeviceId();
+  window.localStorage.setItem(MOBILE_DEVICE_ID_STORAGE_KEY, next);
+  return next;
+}
+
 function persistSession(session) {
   if (!session) return;
 
@@ -286,6 +315,7 @@ function getStoredSessionCandidate() {
   return {
     mode: 'reconnect',
     desktopOrigin: stored.desktopOrigin,
+    deviceId: ensureDeviceId(),
     sessionId: stored.sessionId,
     token: stored.reconnectToken,
   };
@@ -296,6 +326,7 @@ function getAuthCandidate() {
     return {
       mode: 'pair',
       desktopOrigin: window.location.origin,
+      deviceId: ensureDeviceId(),
       sessionId: pendingPairingParams.sessionId,
       token: pendingPairingParams.pairingToken,
     };
@@ -313,6 +344,47 @@ function buildSocketUrl(origin) {
   return url.toString();
 }
 
+function getSocketReadyState() {
+  return socket ? socket.readyState : WebSocket.CLOSED;
+}
+
+function hasHealthyAuthenticatedSocket(now = Date.now()) {
+  return (
+    socket &&
+    socket.readyState === WebSocket.OPEN &&
+    isAuthenticated &&
+    now - lastPongReceived <= HEALTHY_PONG_WINDOW_MS
+  );
+}
+
+function hasActiveConnectionAttempt(now = Date.now()) {
+  if (!socket) return false;
+
+  if (socket.readyState === WebSocket.CONNECTING) {
+    return now - lastConnectStartedAt < MAX_CONNECTING_AGE_MS;
+  }
+
+  if (socket.readyState === WebSocket.OPEN && !isAuthenticated) {
+    return now - lastConnectStartedAt < MAX_CONNECTING_AGE_MS;
+  }
+
+  return false;
+}
+
+function scheduleReconnect(delay, context = null) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = 0;
+    connect({ reason: context?.reason || 'retry' });
+  }, Math.max(0, delay));
+
+  if (context?.message) {
+    setPairingMode(true);
+    setConnectScreen(context.title || 'Reconnecting to Linka', context.message);
+    setStatus('disconnected', context.status || context.message);
+  }
+}
+
 function applyAuthenticatedSession(origin, sessionId, reconnectToken) {
   persistSession({
     desktopOrigin: origin,
@@ -324,6 +396,7 @@ function applyAuthenticatedSession(origin, sessionId, reconnectToken) {
 
 function forgetCurrentDevice(options = {}) {
   manualDisconnect = Boolean(options.manual);
+  activeConnectGeneration = ++connectGeneration;
   clearTimeout(reconnectTimer);
   clearStoredSession();
   clearPairingParamsFromUrl();
@@ -350,7 +423,8 @@ function forgetCurrentDevice(options = {}) {
   );
 }
 
-function handleSessionInvalidation(message) {
+function handleSessionInvalidation(message, context = null) {
+  lastCloseContext = context;
   forgetCurrentDevice({ manual: false });
   showClientError(message);
 }
@@ -389,11 +463,21 @@ function setBridgeCaptureAvailability(available) {
 
 function syncViewportHeight() {
   const vv = window.visualViewport;
-  const height = vv?.height || window.innerHeight;
-  document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+  const styles = window.getComputedStyle(document.body);
+  const safeTop = parseFloat(styles.paddingTop) || 0;
+  const safeBottom = parseFloat(styles.paddingBottom) || 0;
+  const candidateHeights = [
+    vv?.height,
+    window.innerHeight,
+    document.documentElement.clientHeight,
+  ].filter((value) => Number.isFinite(value) && value > 0);
+  const rawHeight = candidateHeights.length > 0 ? Math.min(...candidateHeights) : window.innerHeight;
+  const appHeight = Math.max(320, rawHeight - safeTop - safeBottom);
+  document.documentElement.style.setProperty('--app-height', `${Math.round(appHeight)}px`);
 
   // Compensate for virtual keyboard pushing viewport up (iOS/Android)
-  if (vv && vv.height < window.innerHeight - 60) {
+  const layoutHeight = Math.min(window.innerHeight, document.documentElement.clientHeight || window.innerHeight);
+  if (vv && vv.height + (vv.offsetTop || 0) < layoutHeight - 60) {
     // Keyboard is open — shift .app up so bottom content stays visible
     const offset = vv.offsetTop || 0;
     document.documentElement.style.setProperty('--app-keyboard-offset', `${Math.round(offset)}px`);
@@ -402,12 +486,22 @@ function syncViewportHeight() {
   }
 }
 
+function scheduleViewportSync() {
+  syncViewportHeight();
+  window.requestAnimationFrame(syncViewportHeight);
+  window.setTimeout(syncViewportHeight, 120);
+  window.setTimeout(syncViewportHeight, 260);
+}
+
 function setStatus(state, label) {
   statusEl.dataset.state = state;
   statusText.textContent = label;
 }
 
-function connect() {
+function connect(options = {}) {
+  const force = Boolean(options.force);
+  const reason = options.reason || 'connect';
+  const now = Date.now();
   const authCandidate = getAuthCandidate();
   const isLocalhostUI = !authCandidate && window.location.hostname === 'localhost';
 
@@ -422,14 +516,29 @@ function connect() {
     return;
   }
 
+  if (!force) {
+    if (hasHealthyAuthenticatedSocket(now)) {
+      return;
+    }
+
+    if (hasActiveConnectionAttempt(now)) {
+      return;
+    }
+  }
+
   // For localhost without credentials, connect anyway — the server auto-authenticates
   const effectiveCandidate = authCandidate || {
     mode: 'pair',
     desktopOrigin: window.location.origin,
+    deviceId: ensureDeviceId(),
     sessionId: '',
     token: '',
   };
 
+  const attemptId = ++connectGeneration;
+  activeConnectGeneration = attemptId;
+  lastConnectStartedAt = now;
+  lastCloseContext = null;
   clearTimeout(reconnectTimer);
   if (socket) {
     socket.onclose = null;
@@ -455,9 +564,11 @@ function connect() {
       : 'If the previous desktop session was replaced, forget this device and pair again.',
   );
   manualDisconnect = false;
-  socket = new WebSocket(buildSocketUrl(effectiveCandidate.desktopOrigin));
+  const currentSocket = new WebSocket(buildSocketUrl(effectiveCandidate.desktopOrigin));
+  socket = currentSocket;
 
-  socket.onopen = () => {
+  currentSocket.onopen = () => {
+    if (attemptId !== activeConnectGeneration || currentSocket !== socket) return;
     isConnected = false;
     isAuthenticated = false;
     lastPongReceived = Date.now();
@@ -466,13 +577,28 @@ function connect() {
 
     if (heartbeatInterval) clearInterval(heartbeatInterval);
     heartbeatInterval = setInterval(() => {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      if (
+        attemptId !== activeConnectGeneration ||
+        currentSocket !== socket ||
+        currentSocket.readyState !== WebSocket.OPEN
+      ) {
+        return;
+      }
 
       if (Date.now() - lastPongReceived > 6000) {
         console.warn('[ws] Heartbeat timeout, forcing reconnect');
-        socket.onclose = null;
-        socket.close();
-        connect();
+        lastCloseContext = {
+          code: 4000,
+          reason: 'heartbeat_timeout',
+          userMessage: 'Connection paused. Retrying…',
+        };
+        currentSocket.onclose = null;
+        currentSocket.close();
+        scheduleReconnect(250, {
+          reason: 'heartbeat_timeout',
+          message: 'Trying to restore the session after a missed heartbeat.',
+          status: 'Offline · Restoring',
+        });
       } else {
         send({ type: 'ping' });
       }
@@ -481,20 +607,22 @@ function connect() {
     // Localhost: skip pair-auth, send bridge_sync to trigger server auto-auth.
     // The server will reply with auth_ok for 127.0.0.1 connections.
     if (isLocalhostUI) {
-      send({ event: 'bridge_sync_request' });
+      currentSocket.send(JSON.stringify({ event: 'bridge_sync_request' }));
     } else {
-      socket.send(
+      currentSocket.send(
         JSON.stringify({
           type: 'auth',
           mode: effectiveCandidate.mode,
           sessionId: effectiveCandidate.sessionId,
+          deviceId: effectiveCandidate.deviceId,
           token: effectiveCandidate.token,
         }),
       );
     }
   };
 
-  socket.onclose = () => {
+  currentSocket.onclose = (event) => {
+    if (attemptId !== activeConnectGeneration || currentSocket !== socket) return;
     isConnected = false;
     isAuthenticated = false;
     if (heartbeatInterval) clearInterval(heartbeatInterval);
@@ -502,21 +630,47 @@ function connect() {
     if (manualDisconnect || (!getAuthCandidate() && !isLocalhostUI)) {
       return;
     }
-    setPairingMode(true);
-    setConnectScreen(
-      'Reconnecting to Linka',
-      `Trying again in ${Math.round(reconnectDelay / 1000)}s.`,
-    );
-    setStatus('disconnected', `Offline · Retry in ${Math.round(reconnectDelay / 1000)}s`);
-    reconnectTimer = window.setTimeout(connect, reconnectDelay);
+    const closeContext = lastCloseContext || {};
+    if (
+      closeContext.reason === 'pairing_reset' ||
+      closeContext.reason === 'session_changed' ||
+      closeContext.reason === 'invalid_pairing' ||
+      closeContext.reason === 'invalid_reconnect' ||
+      closeContext.reason === 'invalid_device' ||
+      closeContext.reason === 'auth_required'
+    ) {
+      return;
+    }
+
+    const code = event?.code || closeContext.code || 0;
+    const reconnectInSeconds = Math.round(reconnectDelay / 1000);
+    let message = `Trying again in ${reconnectInSeconds}s.`;
+    if (code === 1006) {
+      message = 'Network changed or the browser paused the socket. Retrying…';
+    } else if (closeContext.reason === 'heartbeat_timeout') {
+      message = 'Connection paused. Retrying…';
+    }
+
+    scheduleReconnect(reconnectDelay, {
+      reason,
+      title: 'Reconnecting to Linka',
+      message,
+      status: `Offline · Retry in ${reconnectInSeconds}s`,
+    });
     reconnectDelay = Math.min(reconnectDelay * 1.6, 5000);
   };
 
-  socket.onerror = (event) => {
-    socket.close();
+  currentSocket.onerror = () => {
+    if (attemptId !== activeConnectGeneration || currentSocket !== socket) return;
+    lastCloseContext = {
+      code: 1006,
+      reason: 'network_disconnect',
+    };
+    currentSocket.close();
   };
 
-  socket.onmessage = (event) => {
+  currentSocket.onmessage = (event) => {
+    if (attemptId !== activeConnectGeneration || currentSocket !== socket) return;
     try {
       const data = JSON.parse(event.data);
       if (data.type === 'hello') {
@@ -526,6 +680,7 @@ function connect() {
       } else if (data.type === 'auth_ok') {
         isConnected = true;
         isAuthenticated = true;
+        lastCloseContext = null;
         reconnectDelay = 650;
         reconnectAttempt = 0;
         setPairingMode(false);
@@ -543,16 +698,18 @@ function connect() {
         }
       } else if (data.type === 'auth_error') {
         const reason = data.reason || 'unknown';
+        lastCloseContext = { code: 4401, reason };
         // On localhost, stale sessions are expected — clear and retry
         if (
           window.location.hostname === 'localhost' &&
           (reason === 'session_changed' ||
             reason === 'invalid_reconnect' ||
-            reason === 'invalid_pairing')
+            reason === 'invalid_pairing' ||
+            reason === 'invalid_device')
         ) {
           clearStoredSession();
           clearPairingParamsFromUrl();
-          socket.close();
+          currentSocket.close();
           reconnectDelay = 650;
           reconnectAttempt = 0;
           connect();
@@ -561,17 +718,24 @@ function connect() {
         if (
           reason === 'session_changed' ||
           reason === 'invalid_reconnect' ||
-          reason === 'invalid_pairing'
+          reason === 'invalid_pairing' ||
+          reason === 'invalid_device'
         ) {
           handleSessionInvalidation(
-            'Desktop session changed or pairing expired. Scan the QR code again.',
+            reason === 'invalid_device'
+              ? 'This saved session belongs to a different device identity. Scan the QR code again.'
+              : 'Desktop session changed or pairing expired. Scan the QR code again.',
+            { code: 4401, reason },
           );
         } else if (reason === 'auth_required') {
-          handleSessionInvalidation('Authentication is required. Scan the QR code again.');
+          handleSessionInvalidation('Authentication is required. Scan the QR code again.', {
+            code: 4401,
+            reason,
+          });
         } else {
           showClientError(`Authentication failed: ${reason}`);
         }
-        socket.close();
+        currentSocket.close();
       } else if (data.event === 'volume_state') {
         if (data.payload && typeof data.payload.volume === 'number') {
           lastVolumeSent = data.payload.volume;
@@ -653,10 +817,12 @@ function connect() {
           );
         }
       } else if (data.event === 'session_reset') {
+        lastCloseContext = { code: 4001, reason: 'pairing_reset' };
         handleSessionInvalidation(
           data.payload?.message || 'Pairing was reset on the desktop app.',
+          { code: 4001, reason: 'pairing_reset' },
         );
-        socket.close();
+        currentSocket.close();
       } else if (data.type === 'pong') {
         lastPongReceived = Date.now();
       } else if (data.event) {
@@ -1012,15 +1178,16 @@ function capturePointer(zone, event) {
   activate(zone, true);
 }
 
-syncViewportHeight();
-window.addEventListener('resize', syncViewportHeight);
-window.visualViewport?.addEventListener('resize', syncViewportHeight);
-window.visualViewport?.addEventListener('scroll', syncViewportHeight);
+scheduleViewportSync();
+window.addEventListener('resize', scheduleViewportSync);
+window.addEventListener('orientationchange', scheduleViewportSync);
+window.visualViewport?.addEventListener('resize', scheduleViewportSync);
+window.visualViewport?.addEventListener('scroll', scheduleViewportSync);
 
 retryConnectBtn.addEventListener('click', () => {
   reconnectDelay = 650;
   reconnectAttempt = 0;
-  connect();
+  connect({ reason: 'manual_retry', force: true });
 });
 
 forgetDeviceBtn.addEventListener('click', () => {
@@ -1227,7 +1394,7 @@ function updateFullscreenButton() {
   appEl.classList.toggle('is-fullscreen', isFullscreen);
   fullscreenBtn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');
   fullscreenBtn.title = isFullscreen ? 'Exit full screen' : 'Full screen';
-  syncViewportHeight();
+  scheduleViewportSync();
   window.requestAnimationFrame(() => renderVolume(lastVolumeSent));
 }
 
@@ -1497,13 +1664,6 @@ function trackpadTouchEnd(event) {
   if (track.pointers.size === 0) {
     flushPendingMove();
     const duration = performance.now() - track.startTime;
-    // DEBUG: log tap detection details (remove after confirming fix)
-    console.log('[trackpad] touchend', {
-      moved: track.moved,
-      duration: Math.round(duration) + 'ms',
-      tapOk: !track.moved && duration < TAP_MAX_MS,
-      pointersWere: track.multiTouch ? 'multi' : 'single',
-    });
     if (!track.moved && duration < TAP_MAX_MS) {
       const now = performance.now();
       const dx = Math.abs(track.startX - track.lastTapX);
@@ -1789,23 +1949,32 @@ document.addEventListener('visibilitychange', () => {
       !socket ||
       socket.readyState === WebSocket.CLOSED ||
       socket.readyState === WebSocket.CLOSING;
+    const socketLooksStale =
+      socket &&
+      socket.readyState === WebSocket.OPEN &&
+      (!isAuthenticated || Date.now() - lastPongReceived > HEALTHY_PONG_WINDOW_MS);
 
-    if (socketIsDead || timeHidden > 3000) {
+    if (
+      socketIsDead ||
+      socketLooksStale ||
+      (timeHidden > VISIBILITY_RECONNECT_THRESHOLD_MS && !hasHealthyAuthenticatedSocket())
+    ) {
       console.log(
-        `[ws] Forcing reconnect. Dead: ${socketIsDead}, Time hidden: ${timeHidden}ms`,
+        `[ws] Refreshing connection. Dead: ${socketIsDead}, stale: ${Boolean(socketLooksStale)}, time hidden: ${timeHidden}ms`,
       );
-      connect();
+      connect({ reason: 'visibility_resume' });
     }
     hiddenAt = 0;
   }
 });
 
 window.addEventListener('online', () => {
+  const readyState = getSocketReadyState();
   if (
-    !socket ||
-    socket.readyState === WebSocket.CLOSED ||
-    socket.readyState === WebSocket.CLOSING
+    readyState === WebSocket.CLOSED ||
+    readyState === WebSocket.CLOSING ||
+    !hasHealthyAuthenticatedSocket()
   ) {
-    connect();
+    connect({ reason: 'network_online' });
   }
 });

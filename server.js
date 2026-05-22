@@ -27,6 +27,7 @@ const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
 const WS_MAX_MSG_PER_SEC = 200;
 const RECONNECT_TOKEN_BYTES = 32;
 const MAX_RECONNECT_TOKENS = 24;
+const RECONNECT_TOKEN_GRACE_MS = 60 * 1000;
 const FAVICON_PATH = path.join(__dirname, 'build', 'linka-icon.ico');
 const WEB_ICON_PATH = path.join(__dirname, 'build', 'linka-logo.png');
 const HERMES_INBOX = path.join(os.homedir(), '.hermes', 'linka', 'inbox');
@@ -224,6 +225,17 @@ export async function startServer(options = {}) {
   }
 
   function pruneReconnectTokens() {
+    const now = Date.now();
+    for (const [token, meta] of reconnectTokens.entries()) {
+      if (
+        meta?.state === 'grace' &&
+        Number.isFinite(meta.validUntil) &&
+        meta.validUntil <= now
+      ) {
+        reconnectTokens.delete(token);
+      }
+    }
+
     if (reconnectTokens.size <= MAX_RECONNECT_TOKENS) {
       return;
     }
@@ -238,11 +250,40 @@ export async function startServer(options = {}) {
   }
 
   function issueReconnectToken(meta = {}) {
+    pruneReconnectTokens();
+    const now = Date.now();
+    const chainId =
+      typeof meta.chainId === 'string' && meta.chainId
+        ? meta.chainId
+        : typeof meta.deviceId === 'string' && meta.deviceId
+          ? `device:${meta.deviceId}`
+          : `anon:${randomUUID()}`;
+
+    for (const [token, existing] of reconnectTokens.entries()) {
+      if (existing?.sessionId !== activeSessionId || existing?.chainId !== chainId) {
+        continue;
+      }
+
+      if (existing.state === 'current') {
+        existing.state = 'grace';
+        existing.validUntil = now + RECONNECT_TOKEN_GRACE_MS;
+        existing.lastSeenAt = now;
+        continue;
+      }
+
+      reconnectTokens.delete(token);
+    }
+
     const token = createSecretToken();
     reconnectTokens.set(token, {
-      createdAt: Date.now(),
-      lastSeenAt: Date.now(),
       ...meta,
+      createdAt: now,
+      lastSeenAt: now,
+      sessionId: activeSessionId,
+      deviceId: typeof meta.deviceId === 'string' && meta.deviceId ? meta.deviceId : null,
+      chainId,
+      state: 'current',
+      validUntil: null,
     });
     pruneReconnectTokens();
     return token;
@@ -295,6 +336,7 @@ export async function startServer(options = {}) {
     ws._authenticated = false;
     ws._sessionId = null;
     ws._reconnectToken = null;
+    ws._deviceId = null;
   }
 
   function closeAllClients(code = 4001, reason = 'Pairing reset') {
@@ -348,6 +390,7 @@ export async function startServer(options = {}) {
   function createAuthSuccessPayload(ws, meta = {}) {
     const reconnectToken = issueReconnectToken(meta);
     ws._reconnectToken = reconnectToken;
+    ws._deviceId = meta.deviceId || null;
 
     return {
       type: 'auth_ok',
@@ -359,6 +402,7 @@ export async function startServer(options = {}) {
   function handleAuthMessage(ws, data, req) {
     const providedSessionId = typeof data.sessionId === 'string' ? data.sessionId : '';
     const providedToken = typeof data.token === 'string' ? data.token : '';
+    const providedDeviceId = typeof data.deviceId === 'string' ? data.deviceId.trim() : '';
     const authMode = data.mode === 'reconnect' ? 'reconnect' : data.mode === 'pair' ? 'pair' : null;
 
     if (!authMode) {
@@ -383,6 +427,8 @@ export async function startServer(options = {}) {
         ws,
         createAuthSuccessPayload(ws, {
           mode: authMode,
+          deviceId: providedDeviceId || null,
+          chainId: providedDeviceId ? `device:${providedDeviceId}` : undefined,
           remoteAddress: req.socket.remoteAddress || 'unknown',
         }),
       );
@@ -410,13 +456,36 @@ export async function startServer(options = {}) {
       return false;
     }
 
-    reconnectTokens.delete(providedToken);
+    if (existing.sessionId !== activeSessionId) {
+      sendJson(ws, { type: 'auth_error', reason: 'session_changed' });
+      return false;
+    }
+
+    if (
+      existing.state === 'grace' &&
+      Number.isFinite(existing.validUntil) &&
+      existing.validUntil <= Date.now()
+    ) {
+      reconnectTokens.delete(providedToken);
+      sendJson(ws, { type: 'auth_error', reason: 'invalid_reconnect' });
+      return false;
+    }
+
+    if (existing.deviceId) {
+      if (!providedDeviceId || providedDeviceId !== existing.deviceId) {
+        sendJson(ws, { type: 'auth_error', reason: 'invalid_device' });
+        return false;
+      }
+    }
+
     clearSocketAuth(ws);
     authenticateSocket(ws, authMode);
     sendJson(
       ws,
       createAuthSuccessPayload(ws, {
         mode: authMode,
+        deviceId: providedDeviceId || existing.deviceId || null,
+        chainId: existing.chainId,
         remoteAddress: req.socket.remoteAddress || 'unknown',
         previousIssuedAt: existing.createdAt,
       }),
@@ -798,6 +867,7 @@ export async function startServer(options = {}) {
     ws._authenticated = false;
     ws._sessionId = null;
     ws._reconnectToken = null;
+    ws._deviceId = null;
     sendJson(ws, {
       type: 'hello',
       authRequired: true,
