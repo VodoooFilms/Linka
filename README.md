@@ -2,293 +2,143 @@
 
 <img src="build/linka-logo.png" alt="Linka logo" width="160">
 
-Linka turns a phone browser into a trackpad, keyboard, scroll pad, and volume controller for a Windows PC or Mac.
+**Approval-first local desktop runtime for AI agents.**
 
-It exists for couch, TV, projector, and desk setups where reaching for a physical mouse, keyboard, or quick transfer tool is inconvenient. The desktop app starts a local server, shows a QR code, and keeps the controller available from the desktop tray or menu bar.
+Linka is an open-source local desktop runtime that explores a missing layer in the current agent stack: safe, local, human-approved desktop execution. AI agents can reason, call APIs, and write code, but real work still happens on local machines, inside desktop applications, operating systems, and human workflows.
 
-macOS note:
-Linka on macOS needs the right system permissions to work correctly.
-Grant `Accessibility` to the app that actually launches Linka, which may be `Linka.app`, `Terminal`, or your editor if you run it from there.
-If you use Bridge screen capture, also grant `Screen Recording` to that same app.
-If macOS asks for `Local Network` access, allow it so your phone can reach Linka over the LAN.
-In practice macOS can prompt up to 3 separate times: one for `Accessibility`, one for `Screen Recording`, and sometimes a third permission pass after reopening the launcher app or the packaged `Linka.app`.
-After changing permissions, fully quit Linka and open it again.
-Run `npm install` fresh on macOS and do not copy `node_modules` from a Windows checkout, or Electron may resolve to `electron.exe` instead of the macOS app binary.
+Today, Linka provides a cross-platform desktop foundation for local pairing, interaction, context transfer, and workflow teaching. The project is designed to evolve toward reusable agent workflows, human-in-the-loop execution, and future interoperability with MCP and Codex Skill-style workflows.
 
-Linka has three local modes:
+## Why Linka Exists
 
-- Remote mode: phone-based trackpad, keyboard, scroll, mouse, volume, and mute controls.
-- Bridge mode: a temporary local space for sending text, images, and small files between phone and PC over the same WebSocket connection.
-- **Teach mode** (macOS only): record local desktop workflows as reusable Linka skills for later review and agent execution.
+Modern AI agents are strongest when the environment is well structured: APIs, source code, tools, and documented workflows. Local desktop work is different. It often depends on application state, visible UI context, human judgment, and actions that should not run unattended.
 
-## Screenshots
+Linka exists to explore that last-mile layer:
 
-<p>
-  <img src="docs/images/linka-phone-keyboard.jpg" alt="Linka phone keyboard controls" width="240">
-  <img src="docs/images/linka-landscape-controller.jpg" alt="Linka landscape controller layout" width="520">
-</p>
+- local interaction instead of cloud relays
+- explicit human approval instead of blind replay
+- workflow teaching instead of hardcoded automation first
+- reusable desktop context instead of one-off manual steps
 
-## Features
+This repository is not a general autonomous desktop agent. It is a local-first runtime foundation for building toward safer desktop agent workflows.
 
-- Phone-based trackpad with hold and right-click controls.
-- Adaptive trackpad acceleration keeps slow movement precise and boosts fast swipes for large desktop spaces, with extra horizontal reach in portrait mode.
-- Pinch-to-zoom and multi-touch gesture support.
-- Scroll, keyboard, volume, and mute controls.
-- **Volume sync**: phone slider reflects the actual PC volume on connect.
-- Bridge mode for local text, image, and file transfer between phone and PC.
-- Ephemeral in-memory Bridge messages with no database, cloud sync, or permanent storage.
-- Bridge uploads limited to 5 MB per file, measured before base64 encoding.
-- Portrait and landscape mobile layouts with fullscreen support.
-- Local HTTP/WebSocket connection over your network — no cloud dependency.
-- **QR code generated locally** — no external API calls, your LAN IP never leaves the PC.
-- **Screen wake lock** — phone screen stays on while connected.
-- **Auto-recovery**: the native input helper respawns automatically if it crashes.
-- **Reconnect persistence**: once paired, the mobile client can automatically rejoin the current desktop session after a refresh or browser reopen.
-- Native input backends for Windows and macOS.
-- Portable Windows Electron build with a bundled native input helper.
-- **Teach Mode** (macOS): record local desktop workflows as Linka-owned skill artifacts with Codex-friendly intent and state context.
-- **Hermes integration**: raw capture export and inbox suggestions remain available for experiments.
+## Current Capabilities
 
-## Teach Skills (macOS only)
+- Cross-platform desktop foundation for macOS, Windows, and Linux
+- Local-first pairing over the same network using QR-based session setup
+- Mobile-to-desktop interaction layer for local input and control
+- Desktop input backends for supported platforms
+- Bridge flows for local text, image, and small file transfer
+- Teach workflows on macOS for capturing reusable local workflow artifacts
+- Session-scoped pairing and reconnect tokens
+- Local tray or menu-bar presence for keeping the runtime available
 
-Linka includes a Teach Mode that records GUI interactions and saves them as Linka-owned local skill recordings. The saved artifact is descriptive and approval-oriented: it keeps intent, app context, sanitized event history, and an end-state screenshot, but it intentionally drops screen coordinates.
+Current features that may look like a remote-control utility are still part of the product, but they are not the main identity of the project. In Linka, they are part of the current local interaction layer that future agent workflows can build on.
 
-### How it works
+## How It Works
 
-1. Click **Teach** in Linka's top bar to start recording. Teach listens to local desktop mouse and keyboard input through the macOS CGEvent tap and also mirrors remote control commands coming from the mobile controller, so mixed workflows can be reconstructed as one skill.
-2. Click Teach again to stop. Enter a name, optionally describe what you did ("Write 'hello' in Notes"), and save. Linka writes a structured recording to `~/.linka/teach/recordings/<name>.json` and a Codex-oriented companion prompt to `~/.linka/teach/recordings/<name>.md`.
-3. The recording includes:
-   - Sanitized action history without screen coordinates.
-   - The inferred target app and app history.
-   - A reference screenshot (`~/.linka/teach/screenshots/<name>.png`) captured after recording stops, so it reflects the end-state Codex should inspect.
-   - Extracted semantic parameters when the intent includes them, such as quoted text or calculator operands.
-   - Source-aware event metadata showing whether observed actions came from `desktop_input` or `remote_command`.
-   - An approval-oriented summary for later toolization plus a Markdown companion the agent can read directly.
-4. These skills are meant to be reviewed and called safely later, not replayed blindly as raw desktop automation. Codex should resolve a named UI action from the artifact and current UI state before executing.
+1. A desktop app starts a local server and shows a pairing QR code.
+2. A mobile browser joins the local session and becomes a local interaction surface.
+3. Desktop input commands are routed through platform-specific backends.
+4. Bridge flows move local context such as text, screenshots, and small files.
+5. On macOS, Teach can capture a workflow and save a structured artifact for later human review.
+6. The long-term goal is to turn these foundations into safe, reusable agent workflows with explicit approval boundaries.
 
-### What Codex can recover well
+## Platforms
 
-- Named calculator workflows when the prompt or screenshot makes the operands visible.
-- Text-entry workflows when the prompt includes quoted text.
-- App-level flows like opening a focused app, minimizing a window, or creating a new project when the end-state screenshot clearly shows the result.
+Current project direction covers:
 
-### Current limitations
+- macOS
+- Windows
+- Linux
 
-- Pointer-heavy workflows with ambiguous UI targets still need screenshot inspection and sometimes user confirmation.
-- If the user prompt omits semantic parameters, Codex may need to infer them from the end-state screenshot instead of the event history alone.
-- Teach records action intent better than geometry; it is intentionally not a coordinate replay system.
+Platform notes:
 
-### Why this exists
+- macOS: strongest workflow-teaching support today
+- Windows: native desktop input support and packaging flow
+- Linux: cross-platform desktop direction is active, with desktop interaction depending on the platform path being used
 
-This is the first step toward reusable local desktop skills that complement coding workflows without turning Linka into a generic autonomous agent.
+Teach is not cross-platform today. It is currently a macOS-first workflow-teaching layer.
 
-### Permissions
+## Agent-Focused Use Cases
 
-Uses the same `Accessibility` permission Linka already needs. No extra grants required.
+- Human-approved local desktop actions alongside coding or agent workflows
+- Capturing repeatable desktop tasks for later review
+- Moving local context between devices without introducing a cloud dependency
+- Exploring how agents could safely act on local desktops instead of only through APIs
+- Building future MCP-connected or reusable skill-based desktop workflows
 
-### Skill discovery
+## Current Status
 
-Skills live in `~/.linka/teach/recordings/`.
+What is implemented today:
 
-## Hermes Integration (experimental)
+- local desktop app runtime
+- local pairing and session model
+- local interaction surface via phone browser
+- desktop input and control paths for supported platforms
+- bridge and context-transfer flows
+- macOS Teach workflow capture
 
-Hermes-specific capture export still exists for the inbox flow:
+What is not implemented yet:
 
-- Raw CGEvent dumps can still be written to `~/.hermes/linka/inbox/`.
-- `GET /hermes/suggest` still clusters repeated captures for experimentation.
-- Teach save no longer writes Hermes markdown skills by default.
+- MCP-native server integration
+- Codex Skill packaging or interoperability
+- a general cross-platform approval engine
+- cross-platform Teach support
+- autonomous desktop execution without human review
 
-### Bridge events
+## OpenAI Ecosystem Direction
 
-Raw CGEvent data is available via `GET /hermes/events` (HTTP) or through WebSocket bridge events. This is mainly for local capture analysis and experimental workflow clustering.
+Linka is being positioned to align with the parts of the OpenAI ecosystem that matter for local agent workflows:
 
-### Hotkey
+- **MCP**: a future Linka MCP server could expose local desktop capabilities and context to models in a standard way
+- **Codex Skills**: Linka Teach artifacts point toward reusable workflow bundles, but Codex Skills are not implemented here today
+- **Human-in-the-loop workflows**: approval and review are core assumptions, especially for desktop actions
+- **Local execution**: Linka is built around local state, local pairing, and local trust boundaries
+- **Reusable agent workflows**: Teach is an early step toward workflows that can later become more structured and interoperable
 
-`Cmd+Shift+Option+L` flushes the current CGEvent tap buffer to `~/.hermes/linka/inbox/` for the experimental inbox flow.
+Linka should be read as a foundation moving in this direction, not as a finished MCP or Codex integration.
 
-## Platform Status
+## Project Pitch
 
-- Windows: full desktop support, native input helper, Windows packaging scripts, installer and portable build flow.
-- macOS: desktop support is available and tested for local use. Mouse, click, right click, scroll, keyboard, volume, and mute work through the native macOS helper. Teach Mode and Hermes experimental capture flows are **exclusive to macOS** (CGEvent tap + Electron desktopCapturer), with Teach now merging local desktop input and mobile-driven remote commands into the same recording artifact.
-- macOS packaging is currently intended for local builds and internal testing. Windows packaging remains the more complete release path today.
+Linka addresses a missing layer in the current agent stack: safe, local desktop action with human approval. The project already provides a cross-platform foundation for local interaction and workflow teaching. The next goal is to evolve Linka toward MCP-native integration, Codex Skill interoperability, and reusable human-approved desktop workflows.
 
-### Security
+## Roadmap
 
-- Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, and X-DNS-Prefetch-Control headers.
-- WebSocket rate limiting (200 msg/s per client).
-- WebSocket message size limit (8 MB) and Bridge file size limit (5 MB decoded).
-- WebSocket heartbeat (30 s) detects and terminates stale connections.
-- Pairing and reconnect tokens are scoped to the current desktop app session and are validated before control commands are accepted.
-- Clipboard fallback for non-HTTPS contexts.
-- Electron context isolation enabled; node integration disabled in renderer.
-- Linka is still designed for trusted local networks only. Do not expose it to public or untrusted networks.
+Phase 1 priorities are documentation, architecture clarity, and public positioning.
 
-### macOS Distribution Notes
+Near-term technical direction includes:
 
-- Linka for macOS currently requests `Accessibility` so it can control mouse and keyboard input. This is a high-impact permission and should only be enabled on machines you trust.
-- `Screen Recording` is only needed when using Bridge screen capture, and should not be enabled unless that feature is actually needed.
-- macOS may also prompt for `Local Network` access so phones on the same LAN can connect to Linka.
-- For local development, run Linka directly from the repo or from a locally generated app bundle on your own Mac.
-- Before distributing a macOS app build to other users, sign and notarize it properly. Unsigned or quarantined builds can trigger Gatekeeper warnings such as `cannot be verified` or `Move to Trash`.
-- Keep the app's permissions narrow and honest. Avoid bundling unrelated capabilities or background behavior that would make App Review or Gatekeeper trust harder.
+- MCP server design
+- Codex Skill packaging research
+- approval workflow modeling
+- better cross-platform Teach support
+- stronger packaging and release flows
+- broader testing and platform validation
 
-## Requirements
+See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 
-- Windows or macOS for native mouse and keyboard control.
-- Node.js 20 or newer.
-- .NET 8 SDK for building the Windows native input helper.
-- Xcode Command Line Tools for building the macOS native input helper.
-- Phone and PC on the same local network.
+## Security And Local-First Principles
 
-### macOS Setup
+- Linka is designed for trusted local environments
+- Pairing and reconnect tokens are scoped to the current desktop session
+- Desktop actions should be treated as human-reviewed operations
+- Teach artifacts are descriptive and approval-oriented, not blind coordinate replay
+- Local network access and platform permissions should remain narrow and honest
 
-```bash
-rm -rf node_modules
-npm install
-npm run build:native:mac
-npm run dev
-```
-
-Before testing input control on macOS, confirm these permissions:
-
-- `System Settings > Privacy & Security > Accessibility`: required for mouse, keyboard, scroll, volume, and mute control.
-- `System Settings > Privacy & Security > Screen Recording`: required only if you use Bridge screen capture.
-- `System Settings > Privacy & Security > Local Network`: allow it if macOS prompts, so your phone can connect to the local Linka server.
-
-Important:
-
-- Grant the permission to the app that launches Linka. If you run from Terminal, grant Terminal. If you run the packaged app, grant `Linka.app`.
-- After enabling a permission, quit and reopen the launching app, then reopen Linka.
-- If macOS still shows stale launcher behavior, reopen the Electron-generated `Linka.app` so the OS re-registers the correct bundle.
-- macOS may ask more than once. The usual pattern is one approval for `Accessibility`, one for `Screen Recording`, and sometimes a third prompt after relaunching before control starts working normally.
-
-If you want a local clickable macOS app bundle for testing:
-
-```bash
-npm run build:mac:app
-```
-
-That command now updates `/Applications/Linka.app` directly so there is only one macOS app copy to test and grant permissions to.
-
-If Electron still looks cross-platform wrong after copying a workspace between machines, run:
-
-```bash
-npm run electron:rebuild
-```
-
-## Quick Start
-
-```bash
-npm install
-npm run dev
-```
-
-Scan the QR code shown by the desktop window with your phone camera. No external service is involved — the QR is generated entirely on your PC.
-
-Windows-native input build:
-
-```powershell
-npm run build:native:win
-```
-
-macOS-native input build:
-
-```bash
-npm run build:native:mac
-```
-
-## Usage
-
-- Use the phone screen as a trackpad. Tap for left-click, two-finger tap for right-click. Slow finger movement stays precise while faster swipes travel farther across large desktops.
-- Use the scroll strip for vertical scrolling.
-- Use Hold for click-and-drag.
-- Use Right for right-click.
-- Use Keyboard to open mobile typing controls with Backspace, Esc, and Tab shortcuts. On macOS, the shortcut modifier is shown as `⌘`; on Windows, it remains `Ctrl`.
-- Use Mute and Volume for desktop audio control. The volume slider syncs to the desktop's actual level on connect.
-- Use **Teach** (macOS) to record local desktop workflows as Linka skills for later review and agent execution. A single recording can include local desktop input, mobile-driven remote control input, or a mix of both.
-- Use Bridge to switch into a clean transfer panel for sending text snippets and images between phone and PC.
-- Tap Capture in Bridge to screenshot the PC screen.
-- Use Copy on text items and Download on image items. Bridge data is RAM-only and disappears when the app/server restarts.
-- Use `Forget` on mobile to clear the saved session from that browser.
-- Use `Reset Pairing` in the desktop tray/menu bar to invalidate all current mobile reconnect tokens and force a fresh scan.
-
-The local status endpoint is available at:
-
-```text
-http://localhost:3000/api/status
-```
-
-To use a different port:
-
-```bash
-LINKA_PORT=3001 npm run dev
-```
-
-On Windows PowerShell:
-
-```powershell
-$env:LINKA_PORT=3001
-npm run dev
-```
-
-## Build
-
-Create the Windows installer:
-
-```powershell
-npm run build:win
-```
-
-Output:
-
-```text
-dist_electron\Linka-Setup.exe
-```
-
-The installed app starts with Windows in the background, launches the local server, and stays available from the system tray. To create a portable executable instead, run `npm run build:win:portable`.
-
-Create a local macOS app bundle for testing:
-
-```bash
-npm run build:mac:app
-```
-
-This macOS build path is currently best treated as a local/internal bundle. For broader distribution, sign and notarize the `.app` before sharing it.
-
-## Project Structure
-
-```text
-.
-|-- index.html                  # Mobile remote and Bridge UI
-|-- main.js                     # Electron main process and tray app
-|-- server.js                   # Local HTTP/WebSocket server
-|-- input-adapter.js            # Native input adapter selection and recovery
-|-- connection-preload.cjs      # Electron preload (context isolation)
-|-- native/mac-input/           # Swift macOS input helper (Quartz + CoreAudio)
-|-- native/win-input/           # .NET Windows input helper (SendInput + Core Audio)
-|-- scripts/                    # Build helper scripts
-|   |-- patch-electron-icon.cjs  # Replaces Electron's base icon before Windows packaging
-|   |-- apply-windows-icon.cjs   # Applies Linka icon to win-unpacked/Linka.exe
-|   `-- generate-mac-icon.cjs    # Generates Linka.icns for local macOS builds
-|-- docs/images/                # README screenshots
-|-- build/linka-icon.ico        # Windows app icon
-|-- build/linka.icns            # macOS app icon
-|-- build/linka-logo.png        # Project logo asset
-`-- build/installer.nsh         # NSIS installer macros (auto-start registry)
-```
+Do not expose Linka to public or untrusted networks.
 
 ## Contributing
 
-Issues and pull requests are welcome. Keep changes focused, describe what you tested, and avoid committing generated build output. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Linka welcomes contributions from:
 
-## Support
+- agent builders
+- desktop automation developers
+- open-source contributors
+- UX and interaction designers
+- docs and example authors
 
-If you find Linka useful, you can support its continued development with a voluntary contribution:
-
-[PayPal](https://paypal.me/antoniomartinez75)
-
-Contributions help maintain, improve, and keep the project evolving.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution areas and guidelines.
 
 ## License
 
-Linka is released under the MIT License. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
