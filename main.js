@@ -147,6 +147,7 @@ async function buildConnectionHtml() {
   const pairingUrl = getPairingUrl();
   const qrDataUrl = await buildQrDataUrl(pairingUrl);
   const logoDataUrl = buildLocalImageDataUrl(path.join(__dirname, 'build', 'linka-logo.png'));
+  const isLinux = process.platform === 'linux';
   const nativeState = serverInfo?.nativeInputReady
     ? 'Input Ready'
     : serverInfo?.permissionMissing
@@ -189,21 +190,21 @@ async function buildConnectionHtml() {
           min-height: 100vh;
           display: grid;
           place-items: center;
-          padding: 20px;
+          padding: ${isLinux ? '12px' : '20px'};
         }
         .card {
           width: min(360px, 100%);
-          padding: 22px 24px 24px;
+          padding: ${isLinux ? '16px 18px 18px' : '22px 24px 24px'};
           display: grid;
-          gap: 14px;
+          gap: ${isLinux ? '10px' : '14px'};
           border: 1px solid var(--line);
           border-radius: 20px;
           background: var(--panel);
           box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
         }
         .logo {
-          width: 126px;
-          height: 126px;
+          width: ${isLinux ? '108px' : '126px'};
+          height: ${isLinux ? '108px' : '126px'};
           margin: 0 auto;
           object-fit: contain;
           background: transparent;
@@ -211,7 +212,7 @@ async function buildConnectionHtml() {
         }
         h1 {
           margin: 0;
-          font-size: 26px;
+          font-size: ${isLinux ? '24px' : '26px'};
           line-height: 1;
           letter-spacing: -0.03em;
           text-align: center;
@@ -219,15 +220,15 @@ async function buildConnectionHtml() {
         p {
           margin: 0;
           color: var(--muted);
-          font-size: 14px;
+          font-size: ${isLinux ? '13px' : '14px'};
           line-height: 1.45;
           text-align: center;
         }
         .qr {
           width: 100%;
-          max-width: 252px;
+          max-width: ${isLinux ? '220px' : '252px'};
           margin: 0 auto;
-          padding: 12px;
+          padding: ${isLinux ? '10px' : '12px'};
           border-radius: 18px;
           background: #fff;
         }
@@ -276,7 +277,7 @@ async function buildConnectionHtml() {
           <div class="qr">
             <img src="${escapeHtml(qrDataUrl)}" alt="QR code for ${escapeHtml(primaryUrl)}">
           </div>
-          <div class="status">${escapeHtml(nativeState)}</div>
+          ${isLinux ? '' : `<div class="status">${escapeHtml(nativeState)}</div>`}
           <button id="openDesktopBtn" type="button">Open Bridge</button>
           <p class="host">${escapeHtml(hostLabel)}</p>
         </section>
@@ -310,9 +311,9 @@ function showConnectionWindow() {
 
   statusWindow = new BrowserWindow({
     width: 420,
-    height: 760,
+    height: process.platform === 'linux' ? 660 : 760,
     minWidth: 380,
-    minHeight: 720,
+    minHeight: process.platform === 'linux' ? 620 : 720,
     resizable: false,
     title: APP_NAME,
     icon: iconPath,

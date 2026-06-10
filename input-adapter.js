@@ -1,4 +1,5 @@
 import { createMacOSInputAdapter } from './platform/input/macos.js';
+import { createLinuxInputAdapter } from './platform/input/linux.js';
 import { createWindowsSendInputAdapter } from './platform/input/windows.js';
 
 async function createRobotAdapter() {
@@ -117,6 +118,13 @@ export async function createInputAdapter(options = {}) {
     const macOSAdapter = createMacOSInputAdapter(onStateChange);
     if (macOSAdapter) {
       return macOSAdapter;
+    }
+  }
+
+  if (process.platform === 'linux') {
+    const linuxAdapter = createLinuxInputAdapter(onStateChange);
+    if (linuxAdapter) {
+      return linuxAdapter;
     }
   }
 

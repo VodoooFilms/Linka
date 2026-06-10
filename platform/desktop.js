@@ -1,4 +1,5 @@
 import { spawnSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 
 const DEFAULT_WINDOWS_STARTUP_REG_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
@@ -62,7 +63,7 @@ function runRegistryCommand(args) {
 }
 
 export function getPlatformTrayIconPath(rootDir) {
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' || process.platform === 'linux') {
     return path.join(rootDir, 'build', 'linka-logo.png');
   }
 
@@ -88,6 +89,44 @@ export function capturePlatformScreenFallback() {
     }
 
     return `data:image/png;base64,${result.stdout.toString('base64')}`;
+  }
+
+  if (process.platform === 'linux') {
+    const tempPath = path.join('/tmp', `linka-capture-${Date.now()}.png`);
+
+    try {
+      if (spawnSync('which', ['gnome-screenshot'], { stdio: 'ignore' }).status === 0) {
+        const result = spawnSync('gnome-screenshot', ['-f', tempPath], {
+          encoding: 'buffer',
+          maxBuffer: 60 * 1024 * 1024,
+          timeout: 15000,
+        });
+
+        if (result.status === 0 && fs.existsSync(tempPath)) {
+          return `data:image/png;base64,${fs.readFileSync(tempPath).toString('base64')}`;
+        }
+      }
+
+      if (spawnSync('which', ['grim'], { stdio: 'ignore' }).status === 0) {
+        const result = spawnSync('grim', ['-'], {
+          encoding: 'buffer',
+          maxBuffer: 60 * 1024 * 1024,
+          timeout: 15000,
+        });
+
+        if (result.status === 0 && result.stdout && result.stdout.length > 0) {
+          return `data:image/png;base64,${result.stdout.toString('base64')}`;
+        }
+      }
+    } finally {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    }
+
+    throw new Error(
+      'Screen capture is not available on this Linux setup. Install gnome-screenshot or grim.',
+    );
   }
 
   throw new Error('Screen capture is not available on this platform.');

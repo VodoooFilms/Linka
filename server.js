@@ -254,10 +254,14 @@ export async function startServer(options = {}) {
     }
   }
 
-  const input = await createInputAdapter({
+  let input = null;
+  input = await createInputAdapter({
     onStateChange: (state) => {
+      const backendName = input?.name || state.name || 'unknown';
+      const nativeInputReady = typeof input?.ready === 'boolean' ? input.ready : Boolean(state.ready);
+
       if (state.retrying) {
-        console.warn(`[input] Backend degraded: ${input.name} (retry ${state.retryCount})`);
+        console.warn(`[input] Backend degraded: ${backendName} (retry ${state.retryCount})`);
       } else if (state.recovered) {
         console.warn('[input] Backend recovered.');
       } else if (state.retriesExhausted) {
@@ -267,8 +271,8 @@ export async function startServer(options = {}) {
       broadcast({
         event: 'system_state',
         payload: {
-          inputBackend: input.name,
-          nativeInputReady: input.ready,
+          inputBackend: backendName,
+          nativeInputReady,
           bridgeCaptureAvailable: captureAvailable,
           permissionMissing: state.permissionMissing,
           message: state.message,

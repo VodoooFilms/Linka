@@ -2,9 +2,30 @@
 
 <img src="build/linka-logo.png" alt="Linka logo" width="160">
 
-Linka turns a phone browser into a trackpad, keyboard, scroll pad, and volume controller for a Windows PC or Mac.
+Linka turns a phone browser into a trackpad, keyboard, scroll pad, and volume controller for a Windows PC, Mac, or Linux desktop.
 
 It exists for couch, TV, projector, and desk setups where reaching for a physical mouse, keyboard, or quick transfer tool is inconvenient. The desktop app starts a local server, shows a QR code, and keeps the controller available from the desktop tray or menu bar.
+
+## Open Source Platform Support
+
+Linka is now documented as a three-platform open source desktop app:
+
+- Windows
+- macOS
+- Linux
+
+Current platform summary:
+
+| Platform | Desktop app | Mouse / keyboard control | Packaging path | Notes |
+| --- | --- | --- | --- | --- |
+| Windows | Yes | Yes | `npm run build:win` / `npm run build:win:portable` | Most complete release flow today |
+| macOS | Yes | Yes | `npm run build:mac:app` / `npm run build:mac:dmg` | Needs Accessibility; signing/notarization still required for distribution |
+| Linux | Yes | Yes on X11 | `npm run build:linux:dir` / `npm run build:linux:appimage` / `npm run build:linux:deb` | Uses bundled `xdotool`; Wayland input injection not implemented |
+
+Additional docs:
+
+- [Cross-platform open source notes](docs/open-source-platforms.md)
+- [Linux validation report](docs/linka-linux-report-2026-06-09.md)
 
 macOS note:
 Linka on macOS needs the right system permissions to work correctly.
@@ -44,7 +65,7 @@ Linka has three local modes:
 - **Screen wake lock** — phone screen stays on while connected.
 - **Auto-recovery**: the native input helper respawns automatically if it crashes.
 - **Reconnect persistence**: once paired, the mobile client can automatically rejoin the current desktop session after a refresh or browser reopen.
-- Native input backends for Windows and macOS.
+- Native input backends for Windows and macOS, plus Linux X11 via `xdotool`.
 - Portable Windows Electron build with a bundled native input helper.
 - **Teach Mode** (macOS): record local desktop workflows as Linka-owned skill artifacts with Codex-friendly intent and state context.
 - **Hermes integration**: raw capture export and inbox suggestions remain available for experiments.
@@ -110,7 +131,13 @@ Raw CGEvent data is available via `GET /hermes/events` (HTTP) or through WebSock
 
 - Windows: full desktop support, native input helper, Windows packaging scripts, installer and portable build flow.
 - macOS: desktop support is available and tested for local use. Mouse, click, right click, scroll, keyboard, volume, and mute work through the native macOS helper. Teach Mode and Hermes experimental capture flows are **exclusive to macOS** (CGEvent tap + Electron desktopCapturer), with Teach now merging local desktop input and mobile-driven remote commands into the same recording artifact.
-- macOS packaging is currently intended for local builds and internal testing. Windows packaging remains the more complete release path today.
+- Linux: desktop packaging is available. Phone pairing, Bridge, and audio control work on Linux. Mouse and keyboard control currently target X11 through `xdotool`; Wayland input injection is not implemented yet. Bridge screen capture fallback works when `gnome-screenshot` or `grim` is installed.
+
+What this means for the repository:
+
+- The open source repo now carries active desktop paths for Windows, macOS, and Linux.
+- Windows, macOS, and Linux packaging can coexist in one repo without splitting platform code into separate branches.
+- Linux is considered functional for X11 desktop use, with the main remaining gap being Wayland input support and further cursor-latency tuning.
 
 ### Security
 
@@ -134,10 +161,11 @@ Raw CGEvent data is available via `GET /hermes/events` (HTTP) or through WebSock
 
 ## Requirements
 
-- Windows or macOS for native mouse and keyboard control.
+- Windows, macOS, or Linux for native mouse and keyboard control.
 - Node.js 20 or newer.
 - .NET 8 SDK for building the Windows native input helper.
 - Xcode Command Line Tools for building the macOS native input helper.
+- Linux desktop note: X11 + `xdotool` is currently required for mouse and keyboard control. `pactl` or `wpctl` is used for volume control. `gnome-screenshot` or `grim` enables Bridge screen capture fallback.
 - Phone and PC on the same local network.
 
 ### macOS Setup
@@ -197,6 +225,18 @@ macOS-native input build:
 npm run build:native:mac
 ```
 
+Linux package build:
+
+```bash
+npm run build:linux:appimage
+```
+
+Linux unpacked desktop build:
+
+```bash
+npm run build:linux:dir
+```
+
 ## Usage
 
 - Use the phone screen as a trackpad. Tap for left-click, two-finger tap for right-click. Slow finger movement stays precise while faster swipes travel farther across large desktops.
@@ -254,6 +294,22 @@ npm run build:mac:app
 ```
 
 This macOS build path is currently best treated as a local/internal bundle. For broader distribution, sign and notarize the `.app` before sharing it.
+
+Create Linux desktop artifacts:
+
+```bash
+npm run build:linux:dir
+npm run build:linux:appimage
+npm run build:linux:deb
+```
+
+Typical Linux outputs:
+
+```text
+dist_electron/linux-unpacked/linka
+dist_electron/Linka-<version>-linux-x64.AppImage
+dist_electron/Linka-<version>-linux-amd64.deb
+```
 
 ## Project Structure
 

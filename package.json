@@ -1,7 +1,7 @@
 {
   "name": "linka",
   "version": "1.0.0",
-  "description": "A phone browser trackpad, keyboard, scroll pad, volume controller, and Hermes Agent GUI workflow recorder for macOS and Windows.",
+  "description": "A phone browser trackpad, keyboard, scroll pad, volume controller, and Hermes Agent GUI workflow recorder for macOS, Windows, and Linux.",
   "license": "MIT",
   "keywords": [
     "remote-control",
@@ -38,7 +38,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write '**/*.{ts,tsx,js,cjs,mjs,json,md,css,html}'",
     "format:check": "prettier --check '**/*.{ts,tsx,js,cjs,mjs,json,md,css,html}'",
-    "test": "node --test \"tests/**/*.test.js\"",
+    "test": "node --test tests/*.test.js",
     "electron:rebuild": "npm rebuild electron",
     "build:icon:mac": "node scripts/generate-mac-icon.cjs",
     "build:native:mac": "mkdir -p native/mac-input/bin && xcrun swiftc -O -framework ApplicationServices -framework AppKit native/mac-input/main.swift -o native/mac-input/bin/Linka.NativeInput",
@@ -46,6 +46,9 @@
     "install:mac:app": "node scripts/install-mac-app.cjs",
     "build:mac:app": "npm run build:icon:mac && npm run build:native:mac && npm run build && electron-builder --mac dir && npm run install:mac:app",
     "build:mac:dmg": "npm run build:icon:mac && npm run build:native:mac && npm run build && electron-builder --mac dmg && npm run install:mac:app",
+    "build:linux:dir": "npm run build && electron-builder --linux dir",
+    "build:linux:appimage": "npm run build && electron-builder --linux AppImage",
+    "build:linux:deb": "npm run build && electron-builder --linux deb",
     "build:native:win": "dotnet publish native/win-input/Linka.NativeInput.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true",
     "patch:electron-icon": "node scripts/patch-electron-icon.cjs",
     "apply:win-icon": "node scripts/apply-windows-icon.cjs",
@@ -96,6 +99,7 @@
       "server/**/*.js",
       "input-adapter.js",
       "platform/**/*.js",
+      "vendor/linux-runtime/**/*",
       "native/mac-input/**/*",
       "native/win-input/bin/Release/net8.0/win-x64/publish/**/*",
       "index.html",
@@ -153,6 +157,14 @@
     },
     "portable": {
       "artifactName": "Linka-${version}-portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build",
+      "category": "Utility"
     },
     "asar": false
   }
