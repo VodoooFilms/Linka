@@ -1,11 +1,7 @@
 {
   "name": "linka",
   "version": "1.0.0",
-<<<<<<< HEAD
   "description": "Approval-first local desktop runtime for AI agents.",
-=======
-  "description": "Approval-first local desktop runtime for AI agents.",
->>>>>>> cd3ee79 (docs: reposition Linka for agent runtime phase 1)
   "license": "MIT",
   "keywords": [
     "ai-agents",
