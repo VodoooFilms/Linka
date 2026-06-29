@@ -20,6 +20,7 @@ build/*
 !build/linka-icon.ico
 !build/linka.icns
 !build/linka-logo.png
+!build/entitlements.mac.plist
 
 # Logs
 *.log
