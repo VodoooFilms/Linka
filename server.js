@@ -2,7 +2,6 @@ import express from 'express';
 import { createServer as createHttpServer } from 'http';
 import { WebSocketServer } from 'ws';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createInputAdapter } from './input-adapter.js';
@@ -16,7 +15,6 @@ import {
   getBridgeContentBytes,
 } from './server/utils.js';
 import { resolveDefaultPort, getConnectionInfo } from './server/network.js';
-import { buildTeachRecording, renderTeachSkillMarkdown } from './server/teach/recording.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,7 +28,6 @@ const MAX_RECONNECT_TOKENS = 24;
 const RECONNECT_TOKEN_GRACE_MS = 60 * 1000;
 const FAVICON_PATH = path.join(__dirname, 'build', 'linka-icon.ico');
 const WEB_ICON_PATH = path.join(__dirname, 'build', 'linka-logo.png');
-const HERMES_INBOX = path.join(os.homedir(), '.hermes', 'linka', 'inbox');
 let loggingReady = false;
 let bridgeMessages = [];
 
@@ -80,38 +77,6 @@ function preventBrowserCache(_req, res, next) {
   next();
 }
 
-// Shared foreground-app helper: single compound AppleScript → 3 values
-// Used by both server.js /hermes/events and main.js hotkey handler.
-export async function getForegroundAppInfo() {
-  try {
-    const { execSync } = await import('child_process');
-    const script = [
-      `tell application "System Events"`,
-      `  set p to first process whose frontmost is true`,
-      `  set n to name of p`,
-      `  try`,
-      `    set b to bundle identifier of p`,
-      `  on error`,
-      `    set b to ""`,
-      `  end try`,
-      `  try`,
-      `    set t to title of front window of p`,
-      `  on error`,
-      `    set t to ""`,
-      `  end try`,
-      `  return n & "|" & b & "|" & t`,
-      `end tell`,
-    ]
-      .map((line) => `-e '${line}'`)
-      .join(' ');
-    const result = execSync(`osascript ${script}`, { encoding: 'utf8', timeout: 3000 }).trim();
-    const [name, bundleId, windowTitle] = result.split('|').map((s) => s.trim());
-    return { name, bundleId: bundleId || null, windowTitle: windowTitle || null };
-  } catch {
-    return { name: 'unknown', bundleId: null, windowTitle: null };
-  }
-}
-
 function normalizeNumber(value, fallback = 0, min = -500, max = 500) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -119,7 +84,6 @@ function normalizeNumber(value, fallback = 0, min = -500, max = 500) {
 }
 
 function handleCommand(input, data) {
-  input.recordTeachCommand?.(data);
   switch (data.type) {
     case 'move':
       input.move(normalizeNumber(data.dx), normalizeNumber(data.dy));
@@ -227,11 +191,7 @@ export async function startServer(options = {}) {
   function pruneReconnectTokens() {
     const now = Date.now();
     for (const [token, meta] of reconnectTokens.entries()) {
-      if (
-        meta?.state === 'grace' &&
-        Number.isFinite(meta.validUntil) &&
-        meta.validUntil <= now
-      ) {
+      if (meta?.state === 'grace' && Number.isFinite(meta.validUntil) && meta.validUntil <= now) {
         reconnectTokens.delete(token);
       }
     }
@@ -299,7 +259,8 @@ export async function startServer(options = {}) {
   input = await createInputAdapter({
     onStateChange: (state) => {
       const backendName = input?.name || state.name || 'unknown';
-      const nativeInputReady = typeof input?.ready === 'boolean' ? input.ready : Boolean(state.ready);
+      const nativeInputReady =
+        typeof input?.ready === 'boolean' ? input.ready : Boolean(state.ready);
 
       if (state.retrying) {
         console.warn(`[input] Backend degraded: ${backendName} (retry ${state.retryCount})`);
@@ -645,188 +606,6 @@ export async function startServer(options = {}) {
     });
   });
 
-  // Hermes Linka: endpoint for Hermes to query captured GUI events
-  app.get('/hermes/events', async (_req, res) => {
-    try {
-      if (typeof input.dumpEvents !== 'function') {
-        res.status(501).json({ error: 'Event capture not available on this platform.' });
-        return;
-      }
-      const result = await input.dumpEvents();
-      fs.mkdirSync(HERMES_INBOX, { recursive: true });
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `manual-${timestamp}.json`;
-      const filePath = path.join(HERMES_INBOX, filename);
-      const appContext = await getForegroundAppInfo();
-      const payload = {
-        captured_at: new Date().toISOString(),
-        source: 'linka-http-endpoint',
-        app: appContext,
-        ...result,
-      };
-      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
-      console.log(`[hermes] Events dumped to ${filePath} (${result.count} events)`);
-      res.json({ success: true, path: filePath, count: result.count });
-    } catch (error) {
-      console.error('[hermes] Event dump failed:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Phase 2: Pattern detection — scan inbox for recurring workflows
-  // and suggest skill names with confidence scores.
-  app.get('/hermes/suggest', async (_req, res) => {
-    try {
-      const limit = Math.min(Number(_req.query.limit) || 20, 100);
-      const minOccurrences = Math.min(Number(_req.query.min) || 2, 10);
-      const files = fs
-        .readdirSync(HERMES_INBOX)
-        .filter((f) => f.endsWith('.json'))
-        .map((f) => path.join(HERMES_INBOX, f))
-        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
-        .slice(0, limit);
-
-      // Group captures by app name
-      const byApp = {};
-      for (const file of files) {
-        try {
-          const capture = JSON.parse(fs.readFileSync(file, 'utf8'));
-          const app = capture.app?.name || 'unknown';
-          if (!byApp[app]) byApp[app] = [];
-          byApp[app].push({
-            file: path.basename(file),
-            captured_at: capture.captured_at,
-            count: capture.count || 0,
-            user_intent: capture.user_intent || null,
-            source: capture.source || 'unknown',
-            events: capture.events?.length || 0,
-          });
-        } catch (_e) {
-          /* skip corrupt files */
-        }
-      }
-
-      // Score pattern similarity: same app + similar event count (±30%)
-      const suggestions = [];
-      for (const [app, captures] of Object.entries(byApp)) {
-        if (captures.length < minOccurrences) continue;
-
-        // Cluster by event count similarity
-        const clusters = [];
-        for (const cap of captures) {
-          let matched = false;
-          for (const cluster of clusters) {
-            const avg = cluster.reduce((s, c) => s + c.count, 0) / cluster.length;
-            if (avg > 0 && Math.abs(cap.count - avg) / avg < 0.3) {
-              cluster.push(cap);
-              matched = true;
-              break;
-            }
-          }
-          if (!matched) clusters.push([cap]);
-        }
-
-        for (const cluster of clusters) {
-          if (cluster.length < minOccurrences) continue;
-          const avgCount = Math.round(cluster.reduce((s, c) => s + c.count, 0) / cluster.length);
-          const hasIntent = cluster.filter((c) => c.user_intent).length;
-          const intentHints = cluster
-            .filter((c) => c.user_intent)
-            .map((c) => c.user_intent)
-            .slice(0, 3);
-
-          // Generate a suggested skill name from app + intent or event count
-          const appSlug = app.toLowerCase().replace(/[^a-z0-9]/g, '-');
-          let suggestionName;
-          if (intentHints.length > 0) {
-            const first = intentHints[0]
-              .toLowerCase()
-              .replace(/[^a-z0-9\s]/g, '')
-              .trim();
-            suggestionName = `${appSlug}-${first.slice(0, 30).replace(/\s+/g, '-')}`;
-          } else {
-            suggestionName = `${appSlug}-workflow-${avgCount}events`;
-          }
-
-          const confidence = Math.min(
-            0.95,
-            (cluster.length / Math.max(minOccurrences, 3)) * 0.5 +
-              (hasIntent / cluster.length) * 0.3 +
-              (avgCount > 3 ? 0.15 : 0.05),
-          );
-
-          suggestions.push({
-            app,
-            suggestion: suggestionName,
-            confidence: Math.round(confidence * 100) / 100,
-            captures: cluster.length,
-            avg_event_count: avgCount,
-            intent_hints: intentHints,
-            latest: cluster[0]?.captured_at || null,
-          });
-        }
-      }
-
-      suggestions.sort((a, b) => b.confidence - a.confidence);
-      res.json({
-        suggestions: suggestions.slice(0, 10),
-        total_captures_analyzed: files.length,
-        apps_found: Object.keys(byApp).length,
-      });
-    } catch (error) {
-      console.error('[hermes] Suggest failed:', error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Phase 2.5: Get front window position/size for coordinate offset on replay
-  async function getWindowBounds() {
-    try {
-      const { execSync } = await import('child_process');
-      // macOS 15+ AppleScript has a bug where `item N of position` returns
-      // "N, " (trailing comma+space), breaking string concatenation.
-      // Use Swift via Process instead for reliable bounds extraction.
-      const swiftCmd =
-        'swift -e \'import AppKit;let a=NSWorkspace.shared.frontmostApplication!;let l=CGWindowListCopyWindowInfo([.optionOnScreenOnly],kCGNullWindowID) as![[String:Any]];for w in l{if(w["kCGWindowOwnerPID"]as!Int)==a.processIdentifier,let b=w["kCGWindowBounds"]as?[String:Double]{print("\\(b["X"]!),\\(b["Y"]!),\\(b["Width"]!),\\(b["Height"]!)");break}}\'';
-      const result = execSync(swiftCmd, { encoding: 'utf8', timeout: 5000 }).trim();
-      if (!result) return null;
-      const [x, y, w, h] = result.split(',').map(Number);
-      if ([x, y, w, h].some(isNaN)) return null;
-      return { x, y, width: w, height: h };
-    } catch {
-      return null;
-    }
-  }
-
-  async function captureTeachScreenshot() {
-    if (captureScreen && typeof captureScreen === 'function') {
-      try {
-        return await captureScreen();
-      } catch (err) {
-        console.warn('[teach] Screenshot capture failed:', err?.message || err);
-      }
-    }
-
-    if (process.platform === 'darwin') {
-      try {
-        const { execSync } = await import('child_process');
-        const tmpPath = '/tmp/linka_teach_screenshot.png';
-        execSync(`screencapture -x -C -t png "${tmpPath}"`, { timeout: 5000 });
-        const buf = fs.readFileSync(tmpPath);
-        fs.unlinkSync(tmpPath);
-        console.log('[teach] Reference screenshot captured via screencapture fallback.');
-        return `data:image/png;base64,${buf.toString('base64')}`;
-      } catch (fallbackErr) {
-        console.warn(
-          '[teach] Screencapture fallback also failed:',
-          fallbackErr?.message || fallbackErr,
-        );
-      }
-    }
-
-    return null;
-  }
-
   if (process.env.NODE_ENV === 'production') {
     const staticRoot = path.join(__dirname, 'dist');
     console.log(`[static] Serving production files from ${staticRoot}`);
@@ -843,11 +622,6 @@ export async function startServer(options = {}) {
   } else {
     console.log(`[static] Serving development files from ${__dirname}`);
     app.use(express.static(__dirname, { fallthrough: true }));
-    // Also serve public/ for CSS, JS, manifest (moved there for Vite compatibility)
-    const publicDir = path.join(__dirname, 'public');
-    if (fs.existsSync(publicDir)) {
-      app.use(express.static(publicDir, { fallthrough: true }));
-    }
     app.get('*', (_req, res) => {
       const indexPath = path.join(__dirname, 'index.html');
       res.sendFile(indexPath, (error) => {
@@ -944,109 +718,6 @@ export async function startServer(options = {}) {
           return;
         }
 
-        // Hermes Linka: Teach mode — start/stop recording
-        if (data.type === 'teach_start') {
-          if (typeof input.teachStart === 'function') {
-            try {
-              const status = await input.teachStart();
-              ws._teachScreenshot = null;
-              sendJson(ws, { event: 'teach_status', payload: status });
-            } catch (error) {
-              sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
-            }
-          } else {
-            sendJson(ws, {
-              event: 'teach_error',
-              payload: { message: 'Teach not available on this platform.' },
-            });
-          }
-          return;
-        }
-        if (data.type === 'teach_stop') {
-          if (typeof input.teachStop === 'function') {
-            try {
-              const result = await input.teachStop();
-              ws._teachScreenshot = await captureTeachScreenshot();
-              if (ws._teachScreenshot) {
-                console.log('[teach] Reference screenshot captured after recording stopped.');
-              }
-              sendJson(ws, { event: 'teach_events', payload: result });
-            } catch (error) {
-              sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
-            }
-          } else {
-            sendJson(ws, {
-              event: 'teach_error',
-              payload: { message: 'Teach not available on this platform.' },
-            });
-          }
-          return;
-        }
-
-        // Hermes Linka: save recorded workflow as a skill
-        if (data.event === 'teach_save') {
-          const { name, events, app, app_history, user_prompt } = data.payload || {};
-          if (!name || !Array.isArray(events)) {
-            sendJson(ws, { event: 'teach_error', payload: { message: 'Missing name or events.' } });
-            return;
-          }
-          try {
-            const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
-            const recordingsDir = path.join(os.homedir(), '.linka', 'teach', 'recordings');
-            const screenshotsDir = path.join(os.homedir(), '.linka', 'teach', 'screenshots');
-            fs.mkdirSync(recordingsDir, { recursive: true });
-            fs.mkdirSync(screenshotsDir, { recursive: true });
-            const filePath = path.join(recordingsDir, `${safeName}.json`);
-            const markdownPath = path.join(recordingsDir, `${safeName}.md`);
-
-            let screenshotPath = null;
-            const screenshot = ws._teachScreenshot;
-            if (
-              screenshot &&
-              typeof screenshot === 'string' &&
-              screenshot.startsWith('data:image/')
-            ) {
-              try {
-                screenshotPath = path.join(screenshotsDir, `${safeName}.png`);
-                const base64Data = screenshot.replace(/^data:image\/\w+;base64,/, '');
-                fs.writeFileSync(screenshotPath, Buffer.from(base64Data, 'base64'));
-                console.log(`[teach] Screenshot saved: ${screenshotPath}`);
-              } catch (_) {
-                screenshotPath = null;
-              }
-            }
-            delete ws._teachScreenshot;
-
-            const recording = buildTeachRecording(name, events, {
-              app: app || {},
-              appHistory: app_history || null,
-              userPrompt: user_prompt || null,
-              screenshotPath,
-              screenshotStage: screenshotPath ? 'after_recording_before_review' : 'not_captured',
-            });
-            recording.skill_prompt_markdown = markdownPath;
-            const markdown = renderTeachSkillMarkdown(recording);
-
-            fs.writeFileSync(filePath, JSON.stringify(recording, null, 2));
-            fs.writeFileSync(markdownPath, markdown);
-            console.log(`[teach] Recording saved: ${filePath}`);
-            sendJson(ws, {
-              event: 'teach_saved',
-              payload: {
-                name: safeName,
-                path: filePath,
-                markdownPath,
-                screenshotPath,
-                kind: recording.kind,
-              },
-            });
-          } catch (error) {
-            console.error('[teach] Save failed:', error);
-            sendJson(ws, { event: 'teach_error', payload: { message: error.message } });
-          }
-          return;
-        }
-
         if (!(await handleBridgeEvent(ws, data))) {
           handleCommand(input, data);
         }
@@ -1123,7 +794,6 @@ export async function startServer(options = {}) {
     inputBackend: input.name,
     nativeInputReady: input.ready,
     bridgeCaptureAvailable: captureAvailable,
-    // Hermes Linka: expose the input adapter for event capture
     inputAdapter: input,
     resetPairing: () => {
       const session = resetPairing();

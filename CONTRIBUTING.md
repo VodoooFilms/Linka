@@ -2,32 +2,19 @@
 
 Thanks for helping improve Linka.
 
-Linka is an open-source local desktop runtime project aimed at agent builders, desktop automation developers, and contributors interested in safer human-in-the-loop workflows. Contributions are welcome across code, UX, docs, examples, and platform validation.
-
-## Who Should Contribute
-
-Linka welcomes contributions from:
-
-- agent builders
-- desktop automation developers
-- open-source contributors
-- UX and interaction designers
-- documentation contributors
+Linka is a lightweight, open-source local trackpad controller. Contributions are welcome across code, UX, docs, and platform validation.
 
 ## Good Contribution Areas
 
 High-value contribution areas include:
 
-- MCP server design and implementation
-- Codex Skill interoperability research
 - Linux Wayland support
-- Windows Teach support
 - cross-platform testing and validation
-- documentation and example workflows
-- approval workflow design
+- trackpad feel and latency improvements
+- documentation and setup guides
 - packaging and release quality
 
-If you are not sure where to start, documentation, examples, and platform validation are all useful.
+If you are not sure where to start, documentation and platform validation are both useful.
 
 ## Issues
 
@@ -38,7 +25,6 @@ Open an issue for:
 - platform compatibility reports
 - architecture questions
 - documentation improvements
-- feature ideas related to local agent workflows
 
 Useful issue details:
 
@@ -53,7 +39,7 @@ Useful issue details:
 Before opening a pull request:
 
 - keep the change scoped and reviewable
-- explain the motivation, especially if the change affects architecture or trust boundaries
+- explain the motivation
 - describe how you tested it
 - run `npm run lint` if the change touches code
 - avoid committing generated output such as `dist`, `dist_electron`, `node_modules`, or native `bin/obj` folders
@@ -62,24 +48,9 @@ Small, clear pull requests are easiest to review and merge.
 
 ## Documentation Matters
 
-Linka is still clarifying its public architecture and agent-facing story. Good documentation changes are first-class contributions.
-
 Helpful docs contributions include:
 
 - setup guides
 - architecture clarifications
 - platform notes
 - screenshots
-- example Teach workflows
-- future MCP and skill-design proposals
-
-## OpenAI Ecosystem Direction
-
-If you want to contribute in an ecosystem-aligned way, focus on work that helps Linka move toward:
-
-- MCP-compatible tool and context exposure
-- reusable workflow packaging
-- human-in-the-loop approval models
-- safer local desktop execution
-
-Please do not present roadmap items as already implemented. The repo should stay technically honest about what exists today and what is still being explored.

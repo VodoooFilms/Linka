@@ -12,7 +12,6 @@ import {
   shell,
 } from 'electron';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import QRCode from 'qrcode';
@@ -21,7 +20,7 @@ import {
   configurePlatformAutoStart,
   getPlatformTrayIconPath,
 } from './platform/desktop.js';
-import { getForegroundAppInfo, startServer } from './server.js';
+import { startServer } from './server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -511,90 +510,6 @@ if (!gotTheLock) {
 
     if (shouldShowConnectionWindow()) {
       showConnectionWindow();
-    }
-
-    // Hermes Linka: register global hotkey Ctrl+Shift+Cmd+L to dump events
-    try {
-      const hermesHotkey = 'CommandOrControl+Shift+Alt+L';
-      const registered = globalShortcut.register(hermesHotkey, async () => {
-        try {
-          console.log('[hermes] Hotkey pressed. Dumping events...');
-          const adapter = serverInfo?.inputAdapter;
-          if (!adapter || typeof adapter.dumpEvents !== 'function') {
-            console.warn('[hermes] Input adapter not ready for event dump.');
-            return;
-          }
-          const result = await adapter.dumpEvents();
-
-          // Get foreground app info via shared helper (single AppleScript call)
-          let appContext = { name: 'unknown', bundleId: null, windowTitle: null };
-          try {
-            appContext = await getForegroundAppInfo();
-          } catch (_e) {
-            /* ignore */
-          }
-
-          const inbox = path.join(os.homedir(), '.hermes', 'linka', 'inbox');
-          fs.mkdirSync(inbox, { recursive: true });
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          const filename = `hotkey-${timestamp}-${appContext.name.replace(/[^a-zA-Z0-9]/g, '-')}.json`;
-          const filePath = path.join(inbox, filename);
-          const payload = {
-            captured_at: new Date().toISOString(),
-            source: 'linka-hotkey',
-            app: appContext,
-            ...result,
-          };
-          fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
-          console.log(`[hermes] ${result.count} events dumped to ${filePath}`);
-
-          // Phase 2: Capture user intent via native macOS dialog (non-blocking)
-          try {
-            const { exec } = await import('child_process');
-            const dialogScript = [
-              `display dialog "What were you doing just now?"`,
-              `default answer ""`,
-              `with title "Hermes Capture"`,
-              `with icon note`,
-              `buttons {"Skip", "Save"}`,
-              `default button "Save"`,
-              `giving up after 10`,
-            ].join(' ');
-            const proc = exec(
-              `osascript -e '${dialogScript}'`,
-              { timeout: 12000 },
-              (_error, stdout) => {
-                const response = stdout?.trim() || '';
-                // Extract the text returned (format: "button returned:Save, text returned:...")
-                const textMatch = response.match(/text returned:(.+?)(?:,|$)/);
-                const intent = textMatch ? textMatch[1].trim() : null;
-                if (intent) {
-                  try {
-                    const existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                    existing.user_intent = intent;
-                    fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
-                    console.log(`[hermes] User intent captured: "${intent}"`);
-                  } catch (_e) {
-                    /* file may have been processed already */
-                  }
-                }
-              },
-            );
-          } catch (_e) {
-            /* dialog not available (headless/CI) — skip gracefully */
-          }
-        } catch (error) {
-          console.error('[hermes] Hotkey dump failed:', error);
-        }
-      });
-
-      if (registered) {
-        console.log(`[hermes] Hotkey ${hermesHotkey} registered for event capture.`);
-      } else {
-        console.warn(`[hermes] Hotkey ${hermesHotkey} registration failed (may be in use).`);
-      }
-    } catch (error) {
-      console.warn('[hermes] Could not register hotkey:', error.message);
     }
   });
 }

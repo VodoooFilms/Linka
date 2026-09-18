@@ -26,20 +26,6 @@ describe('Linka Smoke Test', () => {
     assert.strictEqual(typeof body.inputBackend, 'string');
   });
 
-  it('GET /hermes/events does not crash (200 or 501 acceptable)', async () => {
-    const res = await fetch(`${baseUrl}/hermes/events`);
-    assert.ok(
-      res.status === 200 || res.status === 501,
-      `/hermes/events returned ${res.status}, expected 200 or 501`,
-    );
-    const body = await res.json();
-    if (res.status === 200) {
-      assert.strictEqual(typeof body.count, 'number');
-    } else {
-      assert.strictEqual(body.error, 'Event capture not available on this platform.');
-    }
-  });
-
   it('GET /api/status CORS/security headers are set', async () => {
     const res = await fetch(`${baseUrl}/api/status`);
     assert.strictEqual(res.headers.get('x-content-type-options'), 'nosniff');

@@ -13,7 +13,17 @@ function getProjectRoot() {
 }
 
 function getHelperBinaryPath() {
-  return path.join(getProjectRoot(), HELPER_RELATIVE_PATH);
+  const root = getProjectRoot();
+  // When packaged with asar, native binaries are unpacked to
+  // app.asar.unpacked so they can be spawned from disk.
+  if (path.basename(root) === 'app.asar') {
+    const unpacked = path.join(path.dirname(root), 'app.asar.unpacked');
+    const unpackedPath = path.join(unpacked, HELPER_RELATIVE_PATH);
+    if (fs.existsSync(unpackedPath)) {
+      return unpackedPath;
+    }
+  }
+  return path.join(root, HELPER_RELATIVE_PATH);
 }
 
 function getHelperSourcePath() {
@@ -82,106 +92,6 @@ function ensureHelperBinary() {
   return tryBuildHelper() ? helperPath : null;
 }
 
-function makeTeachEvent(type, ts, extra = {}) {
-  return {
-    ts,
-    type,
-    x: null,
-    y: null,
-    key: null,
-    modifiers: null,
-    dy: null,
-    source: 'remote_command',
-    ...extra,
-  };
-}
-
-export function normalizeTeachCommandToEvents(command, baseTs = Date.now() / 1000) {
-  const type = typeof command?.type === 'string' ? command.type : '';
-  const events = [];
-  const step = 0.015;
-
-  switch (type) {
-    case 'move':
-      events.push(makeTeachEvent('mouse_moved', baseTs));
-      break;
-    case 'mousedown':
-      events.push(makeTeachEvent(command.button === 'right' ? 'right_down' : 'left_down', baseTs));
-      break;
-    case 'mouseup':
-      events.push(makeTeachEvent(command.button === 'right' ? 'right_up' : 'left_up', baseTs));
-      break;
-    case 'click': {
-      const downType = command.button === 'right' ? 'right_down' : 'left_down';
-      const upType = command.button === 'right' ? 'right_up' : 'left_up';
-      const clickCount = command.double ? 2 : 1;
-      for (let index = 0; index < clickCount; index += 1) {
-        const offset = index * step * 3;
-        events.push(makeTeachEvent(downType, baseTs + offset));
-        events.push(makeTeachEvent(upType, baseTs + offset + step));
-      }
-      break;
-    }
-    case 'scroll':
-      events.push(makeTeachEvent('scroll', baseTs, { dy: Number(command.dy) || 0 }));
-      break;
-    case 'zoom': {
-      const key = command.direction === 'out' ? '-' : '=';
-      events.push(makeTeachEvent('key_combo', baseTs, { key, modifiers: ['cmd'] }));
-      break;
-    }
-    case 'type': {
-      const text = String(command.text || '');
-      for (const [index, char] of Array.from(text).entries()) {
-        events.push(makeTeachEvent('key_combo', baseTs + index * step, { key: char }));
-      }
-      break;
-    }
-    case 'keytap':
-      events.push(
-        makeTeachEvent('key_combo', baseTs, {
-          key: command.key || '?',
-          modifiers: Array.isArray(command.modifiers) && command.modifiers.length > 0
-            ? command.modifiers
-            : null,
-        }),
-      );
-      break;
-    default:
-      break;
-  }
-
-  return events;
-}
-
-function eventsLookEquivalent(left, right) {
-  return (
-    left?.type === right?.type &&
-    (left?.key || null) === (right?.key || null) &&
-    JSON.stringify(left?.modifiers || null) === JSON.stringify(right?.modifiers || null) &&
-    (left?.dy || 0) === (right?.dy || 0)
-  );
-}
-
-export function mergeTeachEventStreams(nativeEvents = [], mirroredEvents = []) {
-  const sorted = [...nativeEvents, ...mirroredEvents].sort((left, right) => left.ts - right.ts);
-  const merged = [];
-
-  for (const event of sorted) {
-    const previous = merged[merged.length - 1];
-    if (
-      previous &&
-      eventsLookEquivalent(previous, event) &&
-      Math.abs((previous.ts || 0) - (event.ts || 0)) <= 0.08
-    ) {
-      continue;
-    }
-    merged.push(event);
-  }
-
-  return merged;
-}
-
 export function createMacOSInputAdapter(onStateChange) {
   if (process.platform !== 'darwin') {
     return null;
@@ -204,8 +114,6 @@ export function createMacOSInputAdapter(onStateChange) {
   let retryTimer = null;
   let draining = false;
   let shuttingDown = false;
-  let teachMirrorActive = false;
-  let teachMirroredEvents = [];
   const MAX_RETRIES = 10;
   const RETRY_DELAY_MS = 2000;
   const NON_CRITICAL_COMMANDS = new Set(['move', 'scroll']);
@@ -251,10 +159,6 @@ export function createMacOSInputAdapter(onStateChange) {
     toggleMute() {
       send({ type: 'togglemute' });
     },
-    recordTeachCommand(command) {
-      if (!teachMirrorActive) return;
-      teachMirroredEvents.push(...normalizeTeachCommandToEvents(command, Date.now() / 1000));
-    },
     getVolumeState() {
       return new Promise((resolve) => {
         const timeout = setTimeout(() => {
@@ -278,85 +182,6 @@ export function createMacOSInputAdapter(onStateChange) {
         helper.stdin.end();
         helper.kill();
       }
-    },
-    // Hermes Linka: dump captured events buffer
-    dumpEvents() {
-      return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          responseResolvers.delete('events_dump');
-          resolve({ count: 0, events: [], error: 'timeout' });
-        }, 5000);
-
-        responseResolvers.set('events_dump', (response) => {
-          clearTimeout(timeout);
-          resolve(response);
-        });
-
-        send({ type: 'dump_events' });
-      });
-    },
-    getCaptureStatus() {
-      return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          responseResolvers.delete('capture_status');
-          resolve({ active: false, buffer_count: 0 });
-        }, 3000);
-
-        responseResolvers.set('capture_status', (response) => {
-          clearTimeout(timeout);
-          resolve(response);
-        });
-
-        send({ type: 'capture_status' });
-      });
-    },
-    // Hermes Linka: Teach mode — start/stop recording with marker
-    teachStart() {
-      return new Promise((resolve) => {
-        teachMirrorActive = true;
-        teachMirroredEvents = [];
-        const timeout = setTimeout(() => {
-          responseResolvers.delete('teach_status');
-          teachMirrorActive = false;
-          resolve({ active: false, buffer_count: 0, error: 'timeout' });
-        }, 5000);
-
-        responseResolvers.set('teach_status', (response) => {
-          clearTimeout(timeout);
-          resolve(response);
-        });
-
-        send({ type: 'teach_start' });
-      });
-    },
-    teachStop() {
-      return new Promise((resolve) => {
-        teachMirrorActive = false;
-        const timeout = setTimeout(() => {
-          responseResolvers.delete('teach_events');
-          responseResolvers.delete('_teach_events_meta');
-          responseResolvers.delete('_teach_events_resolve');
-          teachMirroredEvents = [];
-          resolve({ count: 0, events: [], error: 'timeout' });
-        }, 10000);
-
-        responseResolvers.set('teach_events', (response) => {
-          clearTimeout(timeout);
-          // Events come via EVENTS_JSON, stash resolve+meta
-          responseResolvers.set('_teach_events_resolve', (payload) => {
-            const mergedEvents = mergeTeachEventStreams(payload.events || [], teachMirroredEvents);
-            teachMirroredEvents = [];
-            resolve({
-              ...payload,
-              count: mergedEvents.length,
-              events: mergedEvents,
-            });
-          });
-          responseResolvers.set('_teach_events_meta', () => response);
-        });
-
-        send({ type: 'teach_stop' });
-      });
     },
   };
 
@@ -442,48 +267,6 @@ export function createMacOSInputAdapter(onStateChange) {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
-        // Hermes Linka: capture raw EVENTS_JSON payload
-        if (trimmed.startsWith('EVENTS_JSON:')) {
-          const jsonPayload = trimmed.slice('EVENTS_JSON:'.length);
-
-          // Handle teach events (check first since both use EVENTS_JSON)
-          const teachMetaResolver = responseResolvers.get('_teach_events_meta');
-          if (teachMetaResolver) {
-            responseResolvers.delete('_teach_events_meta');
-            const meta = teachMetaResolver();
-            let events = [];
-            try {
-              events = JSON.parse(jsonPayload);
-            } catch (_e) {
-              /* ignore */
-            }
-            const teachResolver = responseResolvers.get('_teach_events_resolve');
-            if (teachResolver) {
-              responseResolvers.delete('_teach_events_resolve');
-              teachResolver({ ...meta, events });
-            }
-            continue;
-          }
-
-          const metaResolver = responseResolvers.get('_events_dump_meta');
-          if (metaResolver) {
-            responseResolvers.delete('_events_dump_meta');
-            const meta = metaResolver();
-            let events = [];
-            try {
-              events = JSON.parse(jsonPayload);
-            } catch (_e) {
-              // ignore parse errors
-            }
-            const eventsResolver = responseResolvers.get('_events_dump_resolve');
-            if (eventsResolver) {
-              responseResolvers.delete('_events_dump_resolve');
-              eventsResolver({ ...meta, events });
-            }
-          }
-          continue;
-        }
-
         try {
           const response = JSON.parse(trimmed);
           if (response.type === 'status') {
@@ -493,34 +276,6 @@ export function createMacOSInputAdapter(onStateChange) {
             if (resolver) {
               responseResolvers.delete('volume_state');
               resolver(response);
-            }
-          } else if (response.type === 'events_dump') {
-            // Hermes Linka: events dump response — also capture EVENTS_JSON line
-            const resolver = responseResolvers.get('events_dump');
-            if (resolver) {
-              responseResolvers.delete('events_dump');
-              // The actual event array comes on the next line as EVENTS_JSON:...
-              // Stash the resolve callback and the metadata
-              responseResolvers.set('_events_dump_resolve', resolver);
-              responseResolvers.set('_events_dump_meta', () => response);
-            }
-          } else if (response.type === 'capture_status') {
-            const resolver = responseResolvers.get('capture_status');
-            if (resolver) {
-              responseResolvers.delete('capture_status');
-              resolver(response);
-            }
-          } else if (response.type === 'teach_status') {
-            const resolver = responseResolvers.get('teach_status');
-            if (resolver) {
-              responseResolvers.delete('teach_status');
-              resolver(response);
-            }
-          } else if (response.type === 'teach_events') {
-            const resolver = responseResolvers.get('teach_events');
-            if (resolver) {
-              responseResolvers.delete('teach_events');
-              resolver(response); // sets _teach_events_resolve and _teach_events_meta for EVENTS_JSON
             }
           } else if (response.type === 'error') {
             if (response.code === 'accessibility_permission_missing') {

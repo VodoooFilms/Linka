@@ -1,22 +1,17 @@
 {
   "name": "linka",
   "version": "1.0.0",
-  "description": "Approval-first local desktop runtime for AI agents.",
+  "description": "Turn your phone into a local trackpad and keyboard for your computer.",
   "license": "MIT",
   "keywords": [
-    "ai-agents",
-    "desktop-runtime",
+    "trackpad",
+    "remote-control",
     "local-first",
-    "human-in-the-loop",
-    "workflow-recorder",
     "electron",
     "macos",
     "windows",
     "linux",
-    "gui-automation",
-    "desktop-automation",
     "bridge",
-    "agent-workflows",
     "lan"
   ],
   "repository": {
@@ -93,7 +88,6 @@
       "build/linka-logo.png",
       "build/entitlements.mac.plist",
       "dist/**/*",
-      "public/**/*",
       "main.js",
       "connection-preload.cjs",
       "scripts/run-electron.cjs",
@@ -168,6 +162,10 @@
       "icon": "build",
       "category": "Utility"
     },
-    "asar": false
+    "asar": true,
+  "asarUnpack": [
+    "native/**/*",
+    "vendor/**/*"
+  ]
   }
 }
