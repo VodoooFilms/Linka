@@ -5,9 +5,17 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const VENDORED_XDOTOOL_PATH = path.join(PROJECT_ROOT, 'vendor', 'linux-runtime', 'usr', 'bin', 'xdotool');
+const VENDORED_ROOT = PROJECT_ROOT.endsWith('app.asar') ? `${PROJECT_ROOT}.unpacked` : PROJECT_ROOT;
+const VENDORED_XDOTOOL_PATH = path.join(
+  VENDORED_ROOT,
+  'vendor',
+  'linux-runtime',
+  'usr',
+  'bin',
+  'xdotool',
+);
 const VENDORED_LIB_DIR = path.join(
-  PROJECT_ROOT,
+  VENDORED_ROOT,
   'vendor',
   'linux-runtime',
   'usr',

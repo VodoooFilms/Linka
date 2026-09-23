@@ -2,7 +2,7 @@
 
 <img src="build/linka-logo.png" alt="Linka logo" width="160">
 
-**Turn your phone into a local trackpad for your computer.**
+**Turn your phone into a local trackpad for your macOS, Windows, or Linux computer.**
 
 Linka is a lightweight, open-source desktop app that lets you control your computer from your phone or tablet browser over your local network. Move the mouse, click, scroll, type, and transfer text, images, and small files — no cables, no cloud.
 
@@ -64,10 +64,19 @@ npm run lint         # typecheck
 
 ## Building
 
+Build on the target operating system:
+
 ```sh
 npm run build:mac:app   # build and install the app into /Applications (macOS)
 npm run build:mac:dmg   # build a macOS DMG
+npm run build:win       # build the Windows installer
+npm run build:win:portable  # build the Windows portable app
+npm run build:linux:dir     # build an unpacked Linux app
+npm run build:linux:appimage  # build a Linux AppImage
+npm run build:linux:deb       # build a Linux Debian package
 ```
+
+Linux desktop input currently requires X11. The Linux package includes `xdotool` for mouse and keyboard control.
 
 ## Contributing
 
